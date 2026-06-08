@@ -10,8 +10,10 @@
 #include "index_btree.h"
 #include "index_hash.h"
 #include "row_occ.h"
+#include "row_silo.h"
+#include "aet_cc_policy.h"
 
-#if CC_ALG == OCC_RESERVE
+#if IS_AET_CC
 namespace {
 	const uint64_t RESERVATION_STRIPE_CNT = 256;
 	struct ReservationStripe {
@@ -42,6 +44,25 @@ namespace {
 		row->set_value(col_id, &value);
 	}
 
+	bool field_equals(row_t * row, int col_id, const std::vector<char> &value) {
+		uint32_t field_size = row->get_schema()->get_field_size(col_id);
+		if (value.size() != field_size)
+			return false;
+		return memcmp(row->get_value(col_id), &value[0], field_size) == 0;
+	}
+
+	void aet_row_latch(row_t * row) {
+#if CC_ALG == AET_HYBRID_SILO
+		row->manager->lock();
+#else
+		row->manager->latch();
+#endif
+	}
+
+	void aet_row_release(row_t * row) {
+		row->manager->release();
+	}
+
 	Access * find_access(txn_man * txn, row_t * row) {
 		for (int i = 0; i < txn->row_cnt; i++) {
 			if (txn->accesses[i]->orig_row == row)
@@ -54,17 +75,18 @@ namespace {
 		ReservationStripe &stripe = reservation_stripe(row);
 		pthread_mutex_lock(&stripe.latch);
 		std::map<row_t *, int64_t>::iterator pending = stripe.reserved_delta.find(row);
-		assert(pending != stripe.reserved_delta.end());
-		pending->second -= delta;
-		if (pending->second == 0)
-			stripe.reserved_delta.erase(pending);
+		if (pending != stripe.reserved_delta.end()) {
+			pending->second -= delta;
+			if (pending->second == 0)
+				stripe.reserved_delta.erase(pending);
+		}
 		pthread_mutex_unlock(&stripe.latch);
 	}
 
 	RC reserve_pending_delta(txn_man * txn, row_t * row, int col_id, int64_t delta, bool enforce_nonnegative, bool count_resource_abort, int64_t * committed_value) {
 		ReservationStripe &stripe = reservation_stripe(row);
 		pthread_mutex_lock(&stripe.latch);
-		row->manager->latch();
+		aet_row_latch(row);
 		int64_t committed = read_i64_field(row, col_id);
 		int64_t pending_delta = 0;
 		std::map<row_t *, int64_t>::iterator pending = stripe.reserved_delta.find(row);
@@ -72,14 +94,14 @@ namespace {
 			pending_delta = pending->second;
 		int64_t available_after_delta = committed + pending_delta + delta;
 		if (enforce_nonnegative && available_after_delta < 0) {
-			row->manager->release();
+			aet_row_release(row);
 			pthread_mutex_unlock(&stripe.latch);
 			if (count_resource_abort)
 				INC_STATS(txn->get_thd_id(), resource_abort_cnt, 1);
 			return Abort;
 		}
 		stripe.reserved_delta[row] = pending_delta + delta;
-		row->manager->release();
+		aet_row_release(row);
 		pthread_mutex_unlock(&stripe.latch);
 		if (committed_value != NULL)
 			*committed_value = committed;
@@ -97,20 +119,15 @@ void txn_man::init(thread_t * h_thd, workload * h_wl, uint64_t thd_id) {
 	row_cnt = 0;
 	wr_cnt = 0;
 	insert_cnt = 0;
-#if CC_ALG == OCC_RESERVE
+#if IS_AET_CC
 	reservation_cnt = 0;
-	agent_branch_cnt = 0;
-	agent_current_branch = 0;
-	agent_branch_active = false;
-	agent_winner_selected = false;
-	for (uint32_t i = 0; i < MAX_AGENT_BRANCHES; i++)
-		agent_branch_reservations[i].clear();
+	agent_txn.abort_agent_txn();
 #endif
 	accesses = (Access **) _mm_malloc(sizeof(Access *) * MAX_ROW_PER_TXN, 64);
 	for (int i = 0; i < MAX_ROW_PER_TXN; i++)
 		accesses[i] = NULL;
 	num_accesses_alloc = 0;
-#if CC_ALG == TICTOC || CC_ALG == SILO
+#if CC_ALG == TICTOC || IS_SILO_CC
 	_pre_abort = (g_params["pre_abort"] == "true");
 	if (g_params["validation_lock"] == "no-wait")
 		_validation_no_wait = true;
@@ -123,13 +140,13 @@ void txn_man::init(thread_t * h_thd, workload * h_wl, uint64_t thd_id) {
 	_max_wts = 0;
 	_write_copy_ptr = (g_params["write_copy_form"] == "ptr");
 	_atomic_timestamp = (g_params["atomic_timestamp"] == "true");
-#elif CC_ALG == SILO
+#elif IS_SILO_CC
 	_cur_tid = 0;
 #endif
 
 }
 
-#if CC_ALG == OCC_RESERVE
+#if IS_AET_CC
 RC txn_man::reserve_row_delta(row_t * row, int col_id, int64_t delta, row_t ** local_row, bool enforce_nonnegative) {
 	assert(row != NULL);
 	assert(reservation_cnt < MAX_ROW_PER_TXN);
@@ -170,44 +187,54 @@ RC txn_man::reserve_row_delta(row_t * row, int col_id, int64_t delta, row_t ** l
 }
 
 RC txn_man::begin_agent_branches(uint32_t branch_cnt) {
-	if (branch_cnt == 0)
-		branch_cnt = 1;
-	if (branch_cnt > MAX_AGENT_BRANCHES)
-		branch_cnt = MAX_AGENT_BRANCHES;
 	abort_agent_branches();
-	agent_branch_cnt = branch_cnt;
-	agent_current_branch = 0;
-	agent_branch_active = false;
-	agent_winner_selected = false;
-	return RCOK;
+	return agent_txn.begin_agent_txn(branch_cnt);
 }
 
 RC txn_man::begin_agent_branch(uint32_t branch_id) {
-	assert(branch_id < agent_branch_cnt);
-	agent_current_branch = branch_id;
-	agent_branch_active = true;
-	agent_branch_reservations[branch_id].clear();
-	return RCOK;
+	return agent_txn.begin_branch(branch_id);
+}
+
+RC txn_man::record_agent_read_intent(row_t * row, int col_id, AgentReadMode mode) {
+	return agent_txn.record_read_intent(row, col_id, mode, start_ts, start_ts);
 }
 
 RC txn_man::reserve_agent_branch_delta(row_t * row, int col_id, int64_t delta, bool enforce_nonnegative) {
-	assert(agent_branch_active);
-	assert(agent_current_branch < agent_branch_cnt);
 	RC rc = reserve_pending_delta(this, row, col_id, delta, enforce_nonnegative, false, NULL);
 	if (rc != RCOK)
 		return rc;
-	return reserve_agent_branch_delta_local(row, col_id, delta);
+	return agent_txn.record_delta_intent(row, col_id, delta, true);
 }
 
 RC txn_man::reserve_agent_branch_delta_local(row_t * row, int col_id, int64_t delta) {
-	assert(agent_branch_active);
-	assert(agent_current_branch < agent_branch_cnt);
-	AgentReservation reservation;
-	reservation.row = row;
-	reservation.col_id = col_id;
-	reservation.delta = delta;
-	agent_branch_reservations[agent_current_branch].push_back(reservation);
-	return RCOK;
+	return agent_txn.record_delta_intent(row, col_id, delta, false);
+}
+
+RC txn_man::record_agent_cas_intent(row_t * row, int col_id,
+		const void * expected_value, uint32_t expected_size,
+		const void * new_value, uint32_t new_size) {
+	return agent_txn.record_cas_intent(row, col_id, start_ts,
+			expected_value, expected_size, new_value, new_size);
+}
+
+RC txn_man::record_agent_cas_intent_for_branch(uint32_t branch_id,
+		row_t * row, int col_id,
+		const void * expected_value, uint32_t expected_size,
+		const void * new_value, uint32_t new_size) {
+	return agent_txn.record_cas_intent_for_branch(branch_id, row, col_id, start_ts,
+			expected_value, expected_size, new_value, new_size);
+}
+
+RC txn_man::record_agent_xwrite_intent(row_t * row, int col_id,
+		const void * new_value, uint32_t new_size) {
+	return agent_txn.record_xwrite_intent(row, col_id, start_ts, new_value, new_size);
+}
+
+RC txn_man::record_agent_xwrite_intent_for_branch(uint32_t branch_id,
+		row_t * row, int col_id,
+		const void * new_value, uint32_t new_size) {
+	return agent_txn.record_xwrite_intent_for_branch(branch_id, row, col_id,
+			start_ts, new_value, new_size);
 }
 
 RC txn_man::select_agent_winner(uint32_t branch_id) {
@@ -215,55 +242,72 @@ RC txn_man::select_agent_winner(uint32_t branch_id) {
 }
 
 RC txn_man::select_agent_winner(uint32_t branch_id, bool materialize_global_reservations) {
-	assert(branch_id < agent_branch_cnt);
-	assert(!agent_winner_selected);
-	std::vector<AgentReservation> &winner = agent_branch_reservations[branch_id];
-	std::vector<AgentReservation> winner_copy = winner;
-	assert(reservation_cnt + winner.size() <= MAX_ROW_PER_TXN);
+	return get_aet_policy()->prepare_winner(this, &agent_txn,
+			branch_id, materialize_global_reservations);
+}
 
-	for (uint32_t i = 0; i < agent_branch_cnt; i++) {
-		if (i == branch_id)
-			continue;
-		abort_agent_branch(i, materialize_global_reservations);
-	}
-
+RC txn_man::materialize_agent_delta_intents(const std::vector<AgentDeltaIntent> & intents,
+		bool materialize_global_reservations) {
+	assert(reservation_cnt + intents.size() <= MAX_ROW_PER_TXN);
 	if (materialize_global_reservations) {
-		for (uint64_t i = 0; i < winner_copy.size(); i++) {
-			reservation_rows[reservation_cnt] = winner_copy[i].row;
-			reservation_cols[reservation_cnt] = winner_copy[i].col_id;
-			reservation_deltas[reservation_cnt] = winner_copy[i].delta;
+		for (uint64_t i = 0; i < intents.size(); i++) {
+			reservation_rows[reservation_cnt] = intents[i].row;
+			reservation_cols[reservation_cnt] = intents[i].col_id;
+			reservation_deltas[reservation_cnt] = intents[i].delta;
 			reservation_cnt ++;
 		}
 	}
-	winner.clear();
 
-	for (uint64_t i = 0; i < winner_copy.size(); i++) {
-		row_t * row = winner_copy[i].row;
-		int col_id = winner_copy[i].col_id;
+	std::vector<AgentDeltaIntent> aggregated;
+	aggregated.reserve(intents.size());
+	for (uint64_t i = 0; i < intents.size(); i++) {
+		bool merged = false;
+		for (uint64_t j = 0; j < aggregated.size(); j++) {
+			if (aggregated[j].row == intents[i].row &&
+					aggregated[j].col_id == intents[i].col_id) {
+				aggregated[j].delta += intents[i].delta;
+				merged = true;
+				break;
+			}
+		}
+		if (!merged)
+			aggregated.push_back(intents[i]);
+	}
+
+	for (uint64_t i = 0; i < aggregated.size(); i++) {
+		row_t * row = aggregated[i].row;
+		int col_id = aggregated[i].col_id;
 		row_t * row_local = get_agent_reserved_local_row(row);
 		if (row_local == NULL)
 			return Abort;
 
-		row->manager->latch();
+		aet_row_latch(row);
 		int64_t committed_value = read_i64_field(row, col_id);
-		row->manager->release();
-		int64_t txn_delta = 0;
-		if (materialize_global_reservations) {
-			for (uint64_t j = 0; j < reservation_cnt; j++) {
-				if (reservation_rows[j] == row && reservation_cols[j] == col_id)
-					txn_delta += reservation_deltas[j];
-			}
-		} else {
-			for (uint64_t j = 0; j < winner_copy.size(); j++) {
-				if (winner_copy[j].row == row && winner_copy[j].col_id == col_id)
-					txn_delta += winner_copy[j].delta;
-			}
-		}
-		write_i64_field(row_local, col_id, committed_value + txn_delta);
+		aet_row_release(row);
+		write_i64_field(row_local, col_id, committed_value + aggregated[i].delta);
 	}
+	return RCOK;
+}
 
-	agent_branch_active = false;
-	agent_winner_selected = true;
+RC txn_man::materialize_agent_write_intents(const std::vector<AgentWriteIntent> & intents) {
+	for (uint64_t i = 0; i < intents.size(); i++) {
+		row_t * row = intents[i].row;
+		int col_id = intents[i].col_id;
+		if (intents[i].type == AGENT_INTENT_COMPARE_AND_SET) {
+			aet_row_latch(row);
+			bool matched = field_equals(row, col_id, intents[i].expected_value);
+			aet_row_release(row);
+			if (!matched)
+				return Abort;
+		}
+		uint32_t field_size = row->get_schema()->get_field_size(col_id);
+		if (intents[i].new_value.size() != field_size)
+			return Abort;
+		row_t * row_local = get_agent_reserved_local_row(row);
+		if (row_local == NULL)
+			return Abort;
+		row_local->set_value(col_id, (void *)&intents[i].new_value[0], field_size);
+	}
 	return RCOK;
 }
 
@@ -272,26 +316,16 @@ void txn_man::abort_agent_branch(uint32_t branch_id) {
 }
 
 void txn_man::abort_agent_branch(uint32_t branch_id, bool release_global_reservations) {
-	if (branch_id >= agent_branch_cnt || branch_id >= MAX_AGENT_BRANCHES)
-		return;
-	if (release_global_reservations) {
-		for (uint64_t j = 0; j < agent_branch_reservations[branch_id].size(); j++) {
-			release_one_reservation(agent_branch_reservations[branch_id][j].row, agent_branch_reservations[branch_id][j].delta);
-		}
-	}
-	agent_branch_reservations[branch_id].clear();
-	if (agent_current_branch == branch_id)
-		agent_branch_active = false;
+	get_aet_policy()->release_branch(this, &agent_txn,
+			branch_id, release_global_reservations);
 }
 
 void txn_man::abort_agent_branches() {
-	for (uint32_t i = 0; i < agent_branch_cnt && i < MAX_AGENT_BRANCHES; i++) {
+	uint32_t branch_cnt = agent_txn.branch_count();
+	for (uint32_t i = 0; i < branch_cnt && i < MAX_AGENT_BRANCHES; i++) {
 		abort_agent_branch(i);
 	}
-	agent_branch_cnt = 0;
-	agent_current_branch = 0;
-	agent_branch_active = false;
-	agent_winner_selected = false;
+	agent_txn.abort_agent_txn();
 }
 
 row_t * txn_man::get_agent_reserved_local_row(row_t * row) {
@@ -307,6 +341,10 @@ row_t * txn_man::get_agent_reserved_local_row(row_t * row) {
 	if (row_local == NULL)
 		release_reservations();
 	return row_local;
+}
+
+void txn_man::release_agent_pending_delta(row_t * row, int64_t delta) {
+	release_one_reservation(row, delta);
 }
 
 void txn_man::confirm_reservations() {
@@ -377,7 +415,7 @@ void txn_man::cleanup(RC rc) {
 		} else {
 			orig_r->return_row(type, this, accesses[rid]->data);
 		}
-#if CC_ALG != TICTOC && CC_ALG != SILO
+#if CC_ALG != TICTOC && !IS_SILO_CC
 		accesses[rid]->data = NULL;
 #endif
 	}
@@ -386,7 +424,7 @@ void txn_man::cleanup(RC rc) {
 		for (UInt32 i = 0; i < insert_cnt; i ++) {
 			row_t * row = insert_rows[i];
 			assert(g_part_alloc == false);
-#if CC_ALG != HSTORE && CC_ALG != OCC && CC_ALG != OCC_RESERVE
+#if CC_ALG != HSTORE && CC_ALG != OCC && !IS_AET_CC
 			mem_allocator.free(row->manager, 0);
 #endif
 			row->free_row();
@@ -396,7 +434,7 @@ void txn_man::cleanup(RC rc) {
 	row_cnt = 0;
 	wr_cnt = 0;
 	insert_cnt = 0;
-#if CC_ALG == OCC_RESERVE
+#if IS_AET_CC
 	if (rc == Abort) {
 		abort_agent_branches();
 		release_reservations();
@@ -415,7 +453,7 @@ row_t * txn_man::get_row(row_t * row, access_t type) {
 	if (accesses[row_cnt] == NULL) {
 		Access * access = (Access *) _mm_malloc(sizeof(Access), 64);
 		accesses[row_cnt] = access;
-#if (CC_ALG == SILO || CC_ALG == TICTOC)
+#if (IS_SILO_CC || CC_ALG == TICTOC)
 		access->data = (row_t *) _mm_malloc(sizeof(row_t), 64);
 		access->data->init(MAX_TUPLE_SIZE);
 		access->orig_data = (row_t *) _mm_malloc(sizeof(row_t), 64);
@@ -438,7 +476,7 @@ row_t * txn_man::get_row(row_t * row, access_t type) {
 #if CC_ALG == TICTOC
 	accesses[row_cnt]->wts = last_wts;
 	accesses[row_cnt]->rts = last_rts;
-#elif CC_ALG == SILO
+#elif IS_SILO_CC
 	accesses[row_cnt]->tid = last_tid;
 #elif CC_ALG == HEKATON
 	accesses[row_cnt]->history_entry = history_entry;
@@ -493,12 +531,12 @@ RC txn_man::finish(RC rc) {
 	return RCOK;
 #endif
 	uint64_t starttime = get_sys_clock();
-#if CC_ALG == OCC || CC_ALG == OCC_RESERVE
+#if CC_ALG == OCC || IS_OCC_AET
 	if (rc == RCOK)
 		rc = occ_man.validate(this);
 	else 
 		cleanup(rc);
-#if CC_ALG == OCC_RESERVE
+#if IS_AET_CC
 	if (rc == RCOK)
 		confirm_reservations();
 #endif
@@ -507,11 +545,15 @@ RC txn_man::finish(RC rc) {
 		rc = validate_tictoc();
 	else 
 		cleanup(rc);
-#elif CC_ALG == SILO
+#elif IS_SILO_CC
 	if (rc == RCOK)
 		rc = validate_silo();
 	else 
 		cleanup(rc);
+#if IS_AET_CC
+	if (rc == RCOK)
+		confirm_reservations();
+#endif
 #elif CC_ALG == HEKATON
 	rc = validate_hekaton(rc);
 	cleanup(rc);
@@ -526,7 +568,7 @@ RC txn_man::finish(RC rc) {
 
 void
 txn_man::release() {
-#if CC_ALG == OCC_RESERVE
+#if IS_AET_CC
 	abort_agent_branches();
 	release_reservations();
 #endif

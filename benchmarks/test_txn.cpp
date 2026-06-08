@@ -18,6 +18,10 @@ RC TestTxnMan::run_txn(int type, int access_num) {
 		return testReserveAbortRelease();
 	case RESERVE_OVERDRAW:
 		return testReserveOverdraw();
+	case AET_CAS:
+		return testAetCas();
+	case AET_XWRITE:
+		return testAetXwrite();
 	default:
 		assert(false);
 	}
@@ -152,6 +156,79 @@ TestTxnMan::testReserveOverdraw()
 	row->get_value(2, value);
 	assert(value == 10);
 	printf("RESERVE_OVERDRAW TEST PASSED\n");
+	return FINISH;
+#else
+	assert(false);
+	return Abort;
+#endif
+}
+
+RC
+TestTxnMan::testAetCas()
+{
+#if IS_AET_CC
+	itemid_t * m_item = index_read(_wl->the_index, 0, 0);
+	row_t * row = ((row_t *)m_item->location);
+	int expected = 0;
+	int loser_value = 1111;
+	int winner_value = 1234;
+
+	RC rc = begin_agent_branches(2);
+	assert(rc == RCOK);
+	rc = begin_agent_branch(0);
+	assert(rc == RCOK);
+	rc = record_agent_cas_intent(row, 0, &expected, sizeof(expected),
+			&loser_value, sizeof(loser_value));
+	assert(rc == RCOK);
+	rc = begin_agent_branch(1);
+	assert(rc == RCOK);
+	rc = record_agent_cas_intent(row, 0, &expected, sizeof(expected),
+			&winner_value, sizeof(winner_value));
+	assert(rc == RCOK);
+	rc = select_agent_winner(1, false);
+	assert(rc == RCOK);
+	rc = finish(rc);
+	assert(rc == RCOK);
+
+	int value;
+	row->get_value(0, value);
+	assert(value == winner_value);
+	printf("AET_CAS TEST PASSED\n");
+	return FINISH;
+#else
+	assert(false);
+	return Abort;
+#endif
+}
+
+RC
+TestTxnMan::testAetXwrite()
+{
+#if IS_AET_CC
+	itemid_t * m_item = index_read(_wl->the_index, 0, 0);
+	row_t * row = ((row_t *)m_item->location);
+	int loser_value = 2222;
+	int winner_value = 3333;
+
+	RC rc = begin_agent_branches(2);
+	assert(rc == RCOK);
+	rc = begin_agent_branch(0);
+	assert(rc == RCOK);
+	rc = record_agent_xwrite_intent(row, 0, &loser_value, sizeof(loser_value));
+	assert(rc == RCOK);
+	rc = begin_agent_branch(1);
+	assert(rc == RCOK);
+	rc = record_agent_xwrite_intent(row, 0, &winner_value, sizeof(winner_value));
+	assert(rc == RCOK);
+	rc = select_agent_winner(1, false);
+	assert(rc == RCOK);
+	rc = finish(rc);
+	assert(rc == RCOK);
+
+	int value;
+	row->get_value(0, value);
+	assert(value == winner_value);
+	printf("AET_XWRITE TEST PASSED\n");
 	return FINISH;
 #else
 	assert(false);

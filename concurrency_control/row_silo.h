@@ -5,7 +5,7 @@ class Catalog;
 class txn_man;
 struct TsReqEntry;
 
-#if CC_ALG==SILO
+#if IS_SILO_CC
 #define LOCK_BIT (1UL << 63)
 
 class Row_silo {

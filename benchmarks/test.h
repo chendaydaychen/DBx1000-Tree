@@ -32,6 +32,8 @@ private:
 	RC testReserveSuccess();
 	RC testReserveAbortRelease();
 	RC testReserveOverdraw();
+	RC testAetCas();
+	RC testAetXwrite();
 	
 	TestWorkload * _wl;
 };

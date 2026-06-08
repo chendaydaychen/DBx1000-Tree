@@ -37,7 +37,7 @@
 /***********************************************/
 // Concurrency Control
 /***********************************************/
-// WAIT_DIE, NO_WAIT, DL_DETECT, TIMESTAMP, MVCC, HEKATON, HSTORE, OCC, OCC_RESERVE, VLL, TICTOC, SILO
+// WAIT_DIE, NO_WAIT, DL_DETECT, TIMESTAMP, MVCC, HEKATON, HSTORE, OCC, OCC_RESERVE/AET_RESERVE, AET_OCC, AET_HYBRID_RULE, AET_HYBRID_SILO, VLL, TICTOC, SILO
 // TODO TIMESTAMP does not work at this moment
 #define CC_ALG 						TICTOC
 #define ISOLATION_LEVEL 			SERIALIZABLE
@@ -177,7 +177,9 @@ enum TestCases {
 	CONFLICT,
 	RESERVE_SUCCESS,
 	RESERVE_ABORT_RELEASE,
-	RESERVE_OVERDRAW
+	RESERVE_OVERDRAW,
+	AET_CAS,
+	AET_XWRITE
 };
 extern TestCases					g_test_case;
 /***********************************************/
@@ -216,6 +218,13 @@ extern TestCases					g_test_case;
 #define VLL							10
 #define HEKATON 					11
 #define OCC_RESERVE					12
+#define AET_RESERVE					OCC_RESERVE
+#define AET_OCC						13
+#define AET_HYBRID_RULE				14
+#define AET_HYBRID_SILO				15
+#define IS_AET_CC					(CC_ALG == OCC_RESERVE || CC_ALG == AET_OCC || CC_ALG == AET_HYBRID_RULE || CC_ALG == AET_HYBRID_SILO)
+#define IS_SILO_CC					(CC_ALG == SILO || CC_ALG == AET_HYBRID_SILO)
+#define IS_OCC_AET					(IS_AET_CC && !IS_SILO_CC)
 //Isolation Levels 
 #define SERIALIZABLE				1
 #define SNAPSHOT					2

@@ -42,6 +42,8 @@ void print_usage() {
 	printf("\t-As         ; Test OCC_RESERVE success\n");
 	printf("\t-Ab         ; Test OCC_RESERVE abort release\n");
 	printf("\t-Ao         ; Test OCC_RESERVE overdraw\n");
+	printf("\t-Ak         ; Test AET CAS winner intent\n");
+	printf("\t-Ax         ; Test AET XWRITE winner intent\n");
 }
 
 void parser(int argc, char * argv[]) {
@@ -122,6 +124,10 @@ void parser(int argc, char * argv[]) {
 				g_test_case = RESERVE_ABORT_RELEASE;
 			if (argv[i][2] == 'o')
 				g_test_case = RESERVE_OVERDRAW;
+			if (argv[i][2] == 'k')
+				g_test_case = AET_CAS;
+			if (argv[i][2] == 'x')
+				g_test_case = AET_XWRITE;
 		}
 		else if (argv[i][1] == 'o') {
 			i++;

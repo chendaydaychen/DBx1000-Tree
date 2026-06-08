@@ -2,7 +2,7 @@
 #include "row.h"
 #include "row_silo.h"
 
-#if CC_ALG == SILO
+#if IS_SILO_CC
 
 RC
 txn_man::validate_silo()

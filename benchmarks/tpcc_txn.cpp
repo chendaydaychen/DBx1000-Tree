@@ -10,7 +10,7 @@
 #include "index_hash.h"
 #include "index_btree.h"
 #include "tpcc_const.h"
-#if CC_ALG == OCC_RESERVE
+#if IS_AET_CC
 #include "row_occ.h"
 #endif
 
@@ -479,6 +479,9 @@ RC tpcc_txn_man::run_new_order(tpcc_query * query) {
 
 RC tpcc_txn_man::run_agent_candidate_attempt(tpcc_query * query, uint64_t supply_w_id, bool reserve_stock) {
 	RC rc = RCOK;
+#if CC_ALG != OCC_RESERVE
+	(void)rc;
+#endif
 	uint64_t key;
 	itemid_t * item;
 
@@ -601,7 +604,7 @@ RC tpcc_txn_man::run_agent_new_order_baseline(tpcc_query * query) {
 		finish(Abort);
 		INC_STATS(get_thd_id(), abort_cnt, 1);
 		stats.abort(get_thd_id());
-#if CC_ALG == OCC || CC_ALG == OCC_RESERVE
+#if CC_ALG == OCC || IS_AET_CC
 		start_ts = glob_manager->get_ts(get_thd_id());
 #endif
 	}
@@ -614,7 +617,7 @@ RC tpcc_txn_man::run_agent_new_order_reserve(tpcc_query * query) {
 }
 
 RC tpcc_txn_man::run_agent_new_order_reserve_impl(tpcc_query * query, bool enforce_nonnegative) {
-#if CC_ALG == OCC_RESERVE
+#if IS_AET_CC
 	RC rc = RCOK;
 	uint64_t key;
 	itemid_t * item;
@@ -630,9 +633,17 @@ RC tpcc_txn_man::run_agent_new_order_reserve_impl(tpcc_query * query, bool enfor
 	if (branch_cnt > g_num_wh)
 		branch_cnt = g_num_wh;
 
+	key = distKey(d_id, w_id);
+	item = index_read(_wl->i_district, key, wh_to_part(w_id));
+	assert(item != NULL);
+	row_t * root_dist = ((row_t *)item->location);
+	int64_t root_o_id = *(int64_t *) root_dist->get_value(D_NEXT_O_ID);
+	int64_t root_next_o_id = root_o_id + 1;
+
 	begin_agent_branches(branch_cnt);
 	uint64_t winner_supply_w_id = 0;
 	uint32_t winner_branch = 0;
+	int64_t winner_o_id = 0;
 	assert(ol_cnt <= 16);
 	row_t * winner_stock_rows[16];
 	for (UInt32 i = 0; i < ol_cnt; i++)
@@ -642,7 +653,7 @@ RC tpcc_txn_man::run_agent_new_order_reserve_impl(tpcc_query * query, bool enfor
 		uint64_t candidate_w_id = ((w_id - 1 + branch) % g_num_wh) + 1;
 		bool feasible = true;
 		row_t * candidate_stock_rows[16];
-		for (UInt32 ol_number = 0; ol_number < ol_cnt; ol_number++) {
+		for (UInt32 ol_number = 0; feasible && ol_number < ol_cnt; ol_number++) {
 			uint64_t ol_i_id = query->items[ol_number].ol_i_id;
 			uint64_t ol_quantity = query->items[ol_number].ol_quantity;
 			uint64_t stock_key = stockKey(ol_i_id, candidate_w_id);
@@ -650,6 +661,8 @@ RC tpcc_txn_man::run_agent_new_order_reserve_impl(tpcc_query * query, bool enfor
 			index_read(_wl->i_stock, stock_key, wh_to_part(candidate_w_id), stock_item);
 			assert(stock_item != NULL);
 			row_t * r_stock = ((row_t *)stock_item->location);
+			record_agent_read_intent(r_stock, S_QUANTITY,
+					enforce_nonnegative ? AGENT_READ_FEASIBILITY : AGENT_READ_STRICT);
 			candidate_stock_rows[ol_number] = r_stock;
 			int64_t delta = -(int64_t)ol_quantity;
 			if (enforce_nonnegative)
@@ -664,6 +677,7 @@ RC tpcc_txn_man::run_agent_new_order_reserve_impl(tpcc_query * query, bool enfor
 		if (feasible) {
 			winner_supply_w_id = candidate_w_id;
 			winner_branch = branch;
+			winner_o_id = root_next_o_id;
 			for (UInt32 ol_number = 0; ol_number < ol_cnt; ol_number++)
 				winner_stock_rows[ol_number] = candidate_stock_rows[ol_number];
 			if (enforce_nonnegative)
@@ -675,6 +689,12 @@ RC tpcc_txn_man::run_agent_new_order_reserve_impl(tpcc_query * query, bool enfor
 
 	if (winner_supply_w_id == 0) {
 		INC_STATS(get_thd_id(), resource_abort_cnt, 1);
+		return finish(Abort);
+	}
+	rc = record_agent_cas_intent_for_branch(winner_branch, root_dist, D_NEXT_O_ID,
+			&root_o_id, sizeof(root_o_id),
+			&root_next_o_id, sizeof(root_next_o_id));
+	if (rc != RCOK) {
 		return finish(Abort);
 	}
 	rc = select_agent_winner(winner_branch, enforce_nonnegative);
@@ -706,18 +726,9 @@ RC tpcc_txn_man::run_agent_new_order_reserve_impl(tpcc_query * query, bool enfor
 	uint64_t c_discount;
 	r_cust_local->get_value(C_DISCOUNT, c_discount);
 
-	key = distKey(d_id, w_id);
-	item = index_read(_wl->i_district, key, wh_to_part(w_id));
-	assert(item != NULL);
-	row_t * r_dist = ((row_t *)item->location);
-	row_t * r_dist_local = get_row(r_dist, WR);
-	if (r_dist_local == NULL) {
-		return finish(Abort);
-	}
 	int64_t o_id;
-	o_id = *(int64_t *) r_dist_local->get_value(D_NEXT_O_ID);
-	o_id ++;
-	r_dist_local->set_value(D_NEXT_O_ID, o_id);
+	o_id = winner_o_id;
+	(void)o_id;
 
 	bool remote = winner_supply_w_id != w_id;
 	for (UInt32 ol_number = 0; ol_number < ol_cnt; ol_number++) {

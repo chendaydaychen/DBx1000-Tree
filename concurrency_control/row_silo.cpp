@@ -3,7 +3,7 @@
 #include "row_silo.h"
 #include "mem_alloc.h"
 
-#if CC_ALG==SILO
+#if IS_SILO_CC
 
 void 
 Row_silo::init(row_t * row) 

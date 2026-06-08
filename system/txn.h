@@ -2,6 +2,7 @@
 
 #include "global.h"
 #include "helper.h"
+#include "agent_txn.h"
 
 class workload;
 class thread_t;
@@ -26,7 +27,7 @@ public:
 #if CC_ALG == TICTOC
 	ts_t 		wts;
 	ts_t 		rts;
-#elif CC_ALG == SILO
+#elif IS_SILO_CC
 	ts_t 		tid;
 	ts_t 		epoch;
 #elif CC_ALG == HEKATON
@@ -34,15 +35,6 @@ public:
 #endif
 
 };
-
-#if CC_ALG == OCC_RESERVE
-struct AgentReservation {
-	row_t *			row;
-	int				col_id;
-	int64_t			delta;
-};
-const uint32_t MAX_AGENT_BRANCHES = 16;
-#endif
 
 class txn_man
 {
@@ -77,27 +69,44 @@ public:
 	int volatile 	ready_part;
 	RC 				finish(RC rc);
 	void 			cleanup(RC rc);
-#if CC_ALG == OCC_RESERVE
+#if IS_AET_CC
 	RC				reserve_row_delta(row_t * row, int col_id, int64_t delta, row_t ** local_row = NULL, bool enforce_nonnegative = true);
 	void			confirm_reservations();
 	void			release_reservations();
 	RC				begin_agent_branches(uint32_t branch_cnt);
 	RC				begin_agent_branch(uint32_t branch_id);
+	RC				record_agent_read_intent(row_t * row, int col_id, AgentReadMode mode);
 	RC				reserve_agent_branch_delta(row_t * row, int col_id, int64_t delta, bool enforce_nonnegative = true);
 	RC				reserve_agent_branch_delta_local(row_t * row, int col_id, int64_t delta);
+	RC				record_agent_cas_intent(row_t * row, int col_id,
+						const void * expected_value, uint32_t expected_size,
+						const void * new_value, uint32_t new_size);
+	RC				record_agent_cas_intent_for_branch(uint32_t branch_id,
+						row_t * row, int col_id,
+						const void * expected_value, uint32_t expected_size,
+						const void * new_value, uint32_t new_size);
+	RC				record_agent_xwrite_intent(row_t * row, int col_id,
+						const void * new_value, uint32_t new_size);
+	RC				record_agent_xwrite_intent_for_branch(uint32_t branch_id,
+						row_t * row, int col_id,
+						const void * new_value, uint32_t new_size);
 	RC				select_agent_winner(uint32_t branch_id);
 	RC				select_agent_winner(uint32_t branch_id, bool materialize_global_reservations);
 	void			abort_agent_branch(uint32_t branch_id);
 	void			abort_agent_branch(uint32_t branch_id, bool release_global_reservations);
 	void			abort_agent_branches();
 	row_t *			get_agent_reserved_local_row(row_t * row);
+	void			release_agent_pending_delta(row_t * row, int64_t delta);
+	RC				materialize_agent_delta_intents(const std::vector<AgentDeltaIntent> & intents,
+						bool materialize_global_reservations);
+	RC				materialize_agent_write_intents(const std::vector<AgentWriteIntent> & intents);
 #endif
 #if CC_ALG == TICTOC
 	ts_t 			get_max_wts() 	{ return _max_wts; }
 	void 			update_max_wts(ts_t max_wts);
 	ts_t 			last_wts;
 	ts_t 			last_rts;
-#elif CC_ALG == SILO
+#elif IS_SILO_CC
 	ts_t 			last_tid;
 #endif
 	
@@ -121,22 +130,18 @@ private:
 	// insert rows
 	uint64_t 		insert_cnt;
 	row_t * 		insert_rows[MAX_ROW_PER_TXN];
-#if CC_ALG == OCC_RESERVE
+#if IS_AET_CC
 	uint64_t		reservation_cnt;
 	row_t *			reservation_rows[MAX_ROW_PER_TXN];
 	int				reservation_cols[MAX_ROW_PER_TXN];
 	int64_t			reservation_deltas[MAX_ROW_PER_TXN];
-	uint32_t		agent_branch_cnt;
-	uint32_t		agent_current_branch;
-	bool			agent_branch_active;
-	bool			agent_winner_selected;
-	std::vector<AgentReservation> agent_branch_reservations[MAX_AGENT_BRANCHES];
+	AgentTxnManager agent_txn;
 #endif
 	txnid_t 		txn_id;
 	ts_t 			timestamp;
 
 	bool _write_copy_ptr;
-#if CC_ALG == TICTOC || CC_ALG == SILO
+#if CC_ALG == TICTOC || IS_SILO_CC
 	bool 			_pre_abort;
 	bool 			_validation_no_wait;
 #endif
@@ -145,7 +150,7 @@ private:
 	ts_t 			_max_wts;
 	// the following methods are defined in concurrency_control/tictoc.cpp
 	RC				validate_tictoc();
-#elif CC_ALG == SILO
+#elif IS_SILO_CC
 	ts_t 			_cur_tid;
 	RC				validate_silo();
 #elif CC_ALG == HEKATON

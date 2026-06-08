@@ -122,7 +122,7 @@ RC thread_t::run() {
 		vll_man.vllMainLoop(m_txn, m_query);
 #elif CC_ALG == MVCC || CC_ALG == HEKATON
 		glob_manager->add_ts(get_thd_id(), m_txn->get_ts());
-#elif CC_ALG == OCC || CC_ALG == OCC_RESERVE
+#elif CC_ALG == OCC || IS_AET_CC
 		// In the original OCC paper, start_ts only reads the current ts without advancing it.
 		// But we advance the global ts here to simplify the implementation. However, the final
 		// results should be the same.
@@ -226,7 +226,7 @@ RC thread_t::runTest(txn_man * txn)
 	RC rc = RCOK;
 	if (g_test_case == READ_WRITE) {
 		rc = ((TestTxnMan *)txn)->run_txn(g_test_case, 0);
-#if CC_ALG == OCC || CC_ALG == OCC_RESERVE
+#if CC_ALG == OCC || IS_AET_CC
 		txn->start_ts = get_next_ts(); 
 #endif
 		rc = ((TestTxnMan *)txn)->run_txn(g_test_case, 1);
@@ -242,7 +242,9 @@ RC thread_t::runTest(txn_man * txn)
 	}
 	else if (g_test_case == RESERVE_SUCCESS ||
 			 g_test_case == RESERVE_ABORT_RELEASE ||
-			 g_test_case == RESERVE_OVERDRAW) {
+			 g_test_case == RESERVE_OVERDRAW ||
+			 g_test_case == AET_CAS ||
+			 g_test_case == AET_XWRITE) {
 		rc = ((TestTxnMan *)txn)->run_txn(g_test_case, 0);
 		return rc;
 	}
