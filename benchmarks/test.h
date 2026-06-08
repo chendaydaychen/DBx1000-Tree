@@ -29,6 +29,9 @@ public:
 private:
 	RC testReadwrite(int access_num);
 	RC testConflict(int access_num);
+	RC testReserveSuccess();
+	RC testReserveAbortRelease();
+	RC testReserveOverdraw();
 	
 	TestWorkload * _wl;
 };

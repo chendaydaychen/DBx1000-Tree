@@ -46,7 +46,7 @@ void row_t::init_manager(row_t * row) {
     manager = (Row_mvcc *) _mm_malloc(sizeof(Row_mvcc), 64);
 #elif CC_ALG == HEKATON
     manager = (Row_hekaton *) _mm_malloc(sizeof(Row_hekaton), 64);
-#elif CC_ALG == OCC
+#elif CC_ALG == OCC || CC_ALG == OCC_RESERVE
     manager = (Row_occ *) mem_allocator.alloc(sizeof(Row_occ), _part_id);
 #elif CC_ALG == TICTOC
 	manager = (Row_tictoc *) _mm_malloc(sizeof(Row_tictoc), 64);
@@ -239,7 +239,7 @@ RC row_t::get_row(access_t type, txn_man * txn, row_t *& row) {
 		assert(row->get_schema() == this->get_schema());
 	}
 	return rc;
-#elif CC_ALG == OCC
+#elif CC_ALG == OCC || CC_ALG == OCC_RESERVE
 	// OCC always make a local copy regardless of read or write
 	txn->cur_row = (row_t *) mem_allocator.alloc(sizeof(row_t), get_part_id());
 	txn->cur_row->init(get_table(), get_part_id());
@@ -292,7 +292,7 @@ void row_t::return_row(access_t type, txn_man * txn, row_t * row) {
 		RC rc = this->manager->access(txn, W_REQ, row);
 		assert(rc == RCOK);
 	}
-#elif CC_ALG == OCC
+#elif CC_ALG == OCC || CC_ALG == OCC_RESERVE
 	assert (row != NULL);
 	if (type == WR)
 		manager->write( row, txn->end_ts );
@@ -308,4 +308,3 @@ void row_t::return_row(access_t type, txn_man * txn, row_t * row) {
 	assert(false);
 #endif
 }
-

@@ -35,6 +35,15 @@ public:
 
 };
 
+#if CC_ALG == OCC_RESERVE
+struct AgentReservation {
+	row_t *			row;
+	int				col_id;
+	int64_t			delta;
+};
+const uint32_t MAX_AGENT_BRANCHES = 16;
+#endif
+
 class txn_man
 {
 public:
@@ -68,6 +77,21 @@ public:
 	int volatile 	ready_part;
 	RC 				finish(RC rc);
 	void 			cleanup(RC rc);
+#if CC_ALG == OCC_RESERVE
+	RC				reserve_row_delta(row_t * row, int col_id, int64_t delta, row_t ** local_row = NULL, bool enforce_nonnegative = true);
+	void			confirm_reservations();
+	void			release_reservations();
+	RC				begin_agent_branches(uint32_t branch_cnt);
+	RC				begin_agent_branch(uint32_t branch_id);
+	RC				reserve_agent_branch_delta(row_t * row, int col_id, int64_t delta, bool enforce_nonnegative = true);
+	RC				reserve_agent_branch_delta_local(row_t * row, int col_id, int64_t delta);
+	RC				select_agent_winner(uint32_t branch_id);
+	RC				select_agent_winner(uint32_t branch_id, bool materialize_global_reservations);
+	void			abort_agent_branch(uint32_t branch_id);
+	void			abort_agent_branch(uint32_t branch_id, bool release_global_reservations);
+	void			abort_agent_branches();
+	row_t *			get_agent_reserved_local_row(row_t * row);
+#endif
 #if CC_ALG == TICTOC
 	ts_t 			get_max_wts() 	{ return _max_wts; }
 	void 			update_max_wts(ts_t max_wts);
@@ -97,6 +121,17 @@ private:
 	// insert rows
 	uint64_t 		insert_cnt;
 	row_t * 		insert_rows[MAX_ROW_PER_TXN];
+#if CC_ALG == OCC_RESERVE
+	uint64_t		reservation_cnt;
+	row_t *			reservation_rows[MAX_ROW_PER_TXN];
+	int				reservation_cols[MAX_ROW_PER_TXN];
+	int64_t			reservation_deltas[MAX_ROW_PER_TXN];
+	uint32_t		agent_branch_cnt;
+	uint32_t		agent_current_branch;
+	bool			agent_branch_active;
+	bool			agent_winner_selected;
+	std::vector<AgentReservation> agent_branch_reservations[MAX_AGENT_BRANCHES];
+#endif
 	txnid_t 		txn_id;
 	ts_t 			timestamp;
 

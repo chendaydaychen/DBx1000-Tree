@@ -12,6 +12,12 @@ RC TestTxnMan::run_txn(int type, int access_num) {
 		return testReadwrite(access_num);
 	case CONFLICT:
 		return testConflict(access_num);
+	case RESERVE_SUCCESS:
+		return testReserveSuccess();
+	case RESERVE_ABORT_RELEASE:
+		return testReserveAbortRelease();
+	case RESERVE_OVERDRAW:
+		return testReserveOverdraw();
 	default:
 		assert(false);
 	}
@@ -79,4 +85,76 @@ TestTxnMan::testConflict(int access_num)
 	}
 	rc = finish(rc);
 	return rc;
+}
+
+RC
+TestTxnMan::testReserveSuccess()
+{
+#if CC_ALG == OCC_RESERVE
+	itemid_t * m_item = index_read(_wl->the_index, 0, 0);
+	row_t * row = ((row_t *)m_item->location);
+	RC rc = reserve_row_delta(row, 2, -3);
+	assert(rc == RCOK);
+	rc = finish(rc);
+	assert(rc == RCOK);
+	uint64_t value;
+	row->get_value(2, value);
+	assert(value == 7);
+	printf("RESERVE_SUCCESS TEST PASSED\n");
+	return FINISH;
+#else
+	assert(false);
+	return Abort;
+#endif
+}
+
+RC
+TestTxnMan::testReserveAbortRelease()
+{
+#if CC_ALG == OCC_RESERVE
+	itemid_t * m_item = index_read(_wl->the_index, 0, 0);
+	row_t * row = ((row_t *)m_item->location);
+	RC rc = reserve_row_delta(row, 2, -8);
+	assert(rc == RCOK);
+	rc = finish(Abort);
+	assert(rc == Abort);
+	uint64_t value;
+	row->get_value(2, value);
+	assert(value == 10);
+
+	rc = reserve_row_delta(row, 2, -8);
+	assert(rc == RCOK);
+	rc = finish(rc);
+	assert(rc == RCOK);
+	row->get_value(2, value);
+	assert(value == 2);
+	printf("RESERVE_ABORT_RELEASE TEST PASSED\n");
+	return FINISH;
+#else
+	assert(false);
+	return Abort;
+#endif
+}
+
+RC
+TestTxnMan::testReserveOverdraw()
+{
+#if CC_ALG == OCC_RESERVE
+	itemid_t * m_item = index_read(_wl->the_index, 0, 0);
+	row_t * row = ((row_t *)m_item->location);
+	RC rc = reserve_row_delta(row, 2, -8);
+	assert(rc == RCOK);
+	rc = reserve_row_delta(row, 2, -3);
+	assert(rc == Abort);
+	rc = finish(Abort);
+	assert(rc == Abort);
+	uint64_t value;
+	row->get_value(2, value);
+	assert(value == 10);
+	printf("RESERVE_OVERDRAW TEST PASSED\n");
+	return FINISH;
+#else
+	assert(false);
+	return Abort;
+#endif
 }

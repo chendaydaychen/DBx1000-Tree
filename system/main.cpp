@@ -58,7 +58,7 @@ int main(int argc, char* argv[])
 	printf("query_queue initialized!\n");
 #if CC_ALG == HSTORE
 	part_lock_man.init();
-#elif CC_ALG == OCC
+#elif CC_ALG == OCC || CC_ALG == OCC_RESERVE
 	occ_man.init();
 #elif CC_ALG == VLL
 	vll_man.init();

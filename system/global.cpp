@@ -56,6 +56,7 @@ UInt32 g_init_parallelism = INIT_PARALLELISM;
 
 UInt32 g_num_wh = NUM_WH;
 double g_perc_payment = PERC_PAYMENT;
+UInt32 g_tpcc_agent_branches = TPCC_AGENT_BRANCHES;
 bool g_wh_update = WH_UPDATE;
 char * output_file = NULL;
 

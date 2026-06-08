@@ -105,6 +105,7 @@ extern UInt32 g_init_parallelism;
 // TPCC
 extern UInt32 g_num_wh;
 extern double g_perc_payment;
+extern UInt32 g_tpcc_agent_branches;
 extern bool g_wh_update;
 extern char * output_file;
 extern UInt32 g_max_items;
@@ -157,4 +158,3 @@ enum TsType {R_REQ, W_REQ, P_REQ, XP_REQ};
 #ifndef UINT64_MAX
 #define UINT64_MAX 		18446744073709551615UL
 #endif // UINT64_MAX
-

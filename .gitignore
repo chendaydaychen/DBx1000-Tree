@@ -1,2 +1,25 @@
+# Build artifacts
 *.o
 *.d
+/rundb
+/build/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+
+# Runtime and experiment output
+/output/
+output*.txt
+*.log
+*.build.log
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+*~

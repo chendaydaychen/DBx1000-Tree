@@ -7,13 +7,35 @@
 #include "table.h"
 
 void tpcc_query::init(uint64_t thd_id, workload * h_wl) {
-	double x = (double)(rand() % 100) / 100.0;
 	part_to_access = (uint64_t *) 
 		mem_allocator.alloc(sizeof(uint64_t) * g_part_cnt, thd_id);
-	if (x < g_perc_payment)
+	if (g_tpcc_txn_type == TPCC_PAYMENT)
 		gen_payment(thd_id);
-	else 
+	else if (g_tpcc_txn_type == TPCC_NEW_ORDER)
 		gen_new_order(thd_id);
+	else if (g_tpcc_txn_type == TPCC_NEW_ORDER_RESERVE) {
+		gen_new_order(thd_id);
+		type = TPCC_NEW_ORDER_RESERVE;
+	} else if (g_tpcc_txn_type == TPCC_NEW_ORDER_RESERVE_STANDARD) {
+		gen_new_order(thd_id);
+		type = TPCC_NEW_ORDER_RESERVE_STANDARD;
+	} else if (g_tpcc_txn_type == TPCC_AGENT_NEW_ORDER_BASELINE) {
+		gen_new_order(thd_id);
+		type = TPCC_AGENT_NEW_ORDER_BASELINE;
+	} else if (g_tpcc_txn_type == TPCC_AGENT_NEW_ORDER_RESERVE) {
+		gen_new_order(thd_id);
+		type = TPCC_AGENT_NEW_ORDER_RESERVE;
+	} else if (g_tpcc_txn_type == TPCC_AGENT_NEW_ORDER_RESERVE_STANDARD) {
+		gen_new_order(thd_id);
+		type = TPCC_AGENT_NEW_ORDER_RESERVE_STANDARD;
+	} else {
+		assert(g_tpcc_txn_type == TPCC_ALL);
+		double x = (double)(rand() % 100) / 100.0;
+		if (x < g_perc_payment)
+			gen_payment(thd_id);
+		else
+			gen_new_order(thd_id);
+	}
 }
 
 void tpcc_query::gen_payment(uint64_t thd_id) {

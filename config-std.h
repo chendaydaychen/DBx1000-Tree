@@ -37,7 +37,7 @@
 /***********************************************/
 // Concurrency Control
 /***********************************************/
-// WAIT_DIE, NO_WAIT, DL_DETECT, TIMESTAMP, MVCC, HEKATON, HSTORE, OCC, VLL, TICTOC, SILO
+// WAIT_DIE, NO_WAIT, DL_DETECT, TIMESTAMP, MVCC, HEKATON, HSTORE, OCC, OCC_RESERVE, VLL, TICTOC, SILO
 // TODO TIMESTAMP does not work at this moment
 #define CC_ALG 						TICTOC
 #define ISOLATION_LEVEL 			SERIALIZABLE
@@ -110,6 +110,7 @@
 #define MAX_ROW_PER_TXN				64
 #define QUERY_INTVL 				1UL
 #define MAX_TXN_PER_PART 			100
+#define STOP_ON_ATTEMPTS			false
 #define FIRST_PART_LOCAL 			true
 #define MAX_TUPLE_SIZE				1024 // in bytes
 // ==== [YCSB] ====
@@ -138,12 +139,18 @@
 enum TPCCTxnType {TPCC_ALL, 
 				TPCC_PAYMENT, 
 				TPCC_NEW_ORDER, 
+				TPCC_NEW_ORDER_RESERVE,
+				TPCC_NEW_ORDER_RESERVE_STANDARD,
+				TPCC_AGENT_NEW_ORDER_BASELINE,
+				TPCC_AGENT_NEW_ORDER_RESERVE,
+				TPCC_AGENT_NEW_ORDER_RESERVE_STANDARD,
 				TPCC_ORDER_STATUS, 
 				TPCC_DELIVERY, 
 				TPCC_STOCK_LEVEL};
 extern TPCCTxnType 					g_tpcc_txn_type;
 
-//#define TXN_TYPE					TPCC_ALL
+#define TPCC_TXN_TYPE				TPCC_ALL
+#define TPCC_AGENT_BRANCHES			1
 #define PERC_PAYMENT 				0.5
 #define FIRSTNAME_MINLEN 			8
 #define FIRSTNAME_LEN 				16
@@ -167,7 +174,10 @@ extern TPCCTxnType 					g_tpcc_txn_type;
 #define TEST_ALL					true
 enum TestCases {
 	READ_WRITE,
-	CONFLICT
+	CONFLICT,
+	RESERVE_SUCCESS,
+	RESERVE_ABORT_RELEASE,
+	RESERVE_OVERDRAW
 };
 extern TestCases					g_test_case;
 /***********************************************/
@@ -205,6 +215,7 @@ extern TestCases					g_test_case;
 #define SILO						9
 #define VLL							10
 #define HEKATON 					11
+#define OCC_RESERVE					12
 //Isolation Levels 
 #define SERIALIZABLE				1
 #define SNAPSHOT					2

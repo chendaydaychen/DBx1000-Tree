@@ -4,11 +4,15 @@
 #include "query.h"
 #include "wl.h"
 #include "thread.h"
+#include "manager.h"
 #include "table.h"
 #include "row.h"
 #include "index_hash.h"
 #include "index_btree.h"
 #include "tpcc_const.h"
+#if CC_ALG == OCC_RESERVE
+#include "row_occ.h"
+#endif
 
 void tpcc_txn_man::init(thread_t * h_thd, workload * h_wl, uint64_t thd_id) {
 	txn_man::init(h_thd, h_wl, thd_id);
@@ -22,6 +26,16 @@ RC tpcc_txn_man::run_txn(base_query * query) {
 			return run_payment(m_query); break;
 		case TPCC_NEW_ORDER :
 			return run_new_order(m_query); break;
+		case TPCC_NEW_ORDER_RESERVE :
+			return run_new_order(m_query); break;
+		case TPCC_NEW_ORDER_RESERVE_STANDARD :
+			return run_new_order(m_query); break;
+		case TPCC_AGENT_NEW_ORDER_BASELINE :
+			return run_agent_new_order_baseline(m_query); break;
+		case TPCC_AGENT_NEW_ORDER_RESERVE :
+			return run_agent_new_order_reserve(m_query); break;
+		case TPCC_AGENT_NEW_ORDER_RESERVE_STANDARD :
+			return run_agent_new_order_reserve_impl(m_query, false); break;
 /*		case TPCC_ORDER_STATUS :
 			return run_order_status(m_query); break;
 		case TPCC_DELIVERY :
@@ -380,7 +394,25 @@ RC tpcc_txn_man::run_new_order(tpcc_query * query) {
 		index_read(stock_index, stock_key, wh_to_part(ol_supply_w_id), stock_item);
 		assert(item != NULL);
 		row_t * r_stock = ((row_t *)stock_item->location);
-		row_t * r_stock_local = get_row(r_stock, WR);
+		row_t * r_stock_local = NULL;
+#if CC_ALG == OCC_RESERVE
+		if (query->type == TPCC_NEW_ORDER_RESERVE) {
+			rc = reserve_row_delta(r_stock, S_QUANTITY, -(int64_t)ol_quantity, &r_stock_local);
+		} else if (query->type == TPCC_NEW_ORDER_RESERVE_STANDARD) {
+			int64_t committed_quantity = 0;
+			r_stock->get_value(S_QUANTITY, committed_quantity);
+			int64_t next_quantity;
+			if ((uint64_t)committed_quantity > ol_quantity + 10) {
+				next_quantity = committed_quantity - (int64_t)ol_quantity;
+			} else {
+				next_quantity = committed_quantity - (int64_t)ol_quantity + 91;
+			}
+			rc = reserve_row_delta(r_stock, S_QUANTITY, next_quantity - committed_quantity, &r_stock_local, false);
+		} else
+#endif
+		{
+			r_stock_local = get_row(r_stock, WR);
+		}
 		if (r_stock_local == NULL) {
 			return finish(Abort);
 		}
@@ -404,13 +436,15 @@ RC tpcc_txn_man::run_new_order(tpcc_query * query) {
 			s_remote_cnt ++;
 			r_stock_local->set_value(S_REMOTE_CNT, &s_remote_cnt);
 		}
-		uint64_t quantity;
-		if (s_quantity > ol_quantity + 10) {
-			quantity = s_quantity - ol_quantity;
-		} else {
-			quantity = s_quantity - ol_quantity + 91;
+		if (query->type != TPCC_NEW_ORDER_RESERVE && query->type != TPCC_NEW_ORDER_RESERVE_STANDARD) {
+			uint64_t quantity;
+			if (s_quantity > ol_quantity + 10) {
+				quantity = s_quantity - ol_quantity;
+			} else {
+				quantity = s_quantity - ol_quantity + 91;
+			}
+			r_stock_local->set_value(S_QUANTITY, &quantity);
 		}
-		r_stock_local->set_value(S_QUANTITY, &quantity);
 
 		/*====================================================+
 		EXEC SQL INSERT
@@ -441,6 +475,304 @@ RC tpcc_txn_man::run_new_order(tpcc_query * query) {
 	}
 	assert( rc == RCOK );
 	return finish(rc);
+}
+
+RC tpcc_txn_man::run_agent_candidate_attempt(tpcc_query * query, uint64_t supply_w_id, bool reserve_stock) {
+	RC rc = RCOK;
+	uint64_t key;
+	itemid_t * item;
+
+	uint64_t w_id = query->w_id;
+	uint64_t d_id = query->d_id;
+	uint64_t c_id = query->c_id;
+	uint64_t ol_cnt = query->ol_cnt;
+
+	key = w_id;
+	item = index_read(_wl->i_warehouse, key, wh_to_part(w_id));
+	assert(item != NULL);
+	row_t * r_wh = ((row_t *)item->location);
+	row_t * r_wh_local = get_row(r_wh, RD);
+	if (r_wh_local == NULL)
+		return Abort;
+	double w_tax;
+	r_wh_local->get_value(W_TAX, w_tax);
+
+	key = custKey(c_id, d_id, w_id);
+	item = index_read(_wl->i_customer_id, key, wh_to_part(w_id));
+	assert(item != NULL);
+	row_t * r_cust = (row_t *) item->location;
+	row_t * r_cust_local = get_row(r_cust, RD);
+	if (r_cust_local == NULL)
+		return Abort;
+	uint64_t c_discount;
+	r_cust_local->get_value(C_DISCOUNT, c_discount);
+
+	key = distKey(d_id, w_id);
+	item = index_read(_wl->i_district, key, wh_to_part(w_id));
+	assert(item != NULL);
+	row_t * r_dist = ((row_t *)item->location);
+	row_t * r_dist_local = get_row(r_dist, WR);
+	if (r_dist_local == NULL)
+		return Abort;
+	int64_t o_id = *(int64_t *) r_dist_local->get_value(D_NEXT_O_ID);
+	o_id ++;
+	r_dist_local->set_value(D_NEXT_O_ID, o_id);
+
+	bool remote = supply_w_id != w_id;
+	for (UInt32 ol_number = 0; ol_number < ol_cnt; ol_number++) {
+		uint64_t ol_i_id = query->items[ol_number].ol_i_id;
+		uint64_t ol_quantity = query->items[ol_number].ol_quantity;
+
+		key = ol_i_id;
+		item = index_read(_wl->i_item, key, 0);
+		assert(item != NULL);
+		row_t * r_item = ((row_t *)item->location);
+		row_t * r_item_local = get_row(r_item, RD);
+		if (r_item_local == NULL)
+			return Abort;
+		int64_t i_price;
+		r_item_local->get_value(I_PRICE, i_price);
+
+		uint64_t stock_key = stockKey(ol_i_id, supply_w_id);
+		itemid_t * stock_item;
+		index_read(_wl->i_stock, stock_key, wh_to_part(supply_w_id), stock_item);
+		assert(stock_item != NULL);
+		row_t * r_stock = ((row_t *)stock_item->location);
+		row_t * r_stock_local = NULL;
+#if CC_ALG == OCC_RESERVE
+		if (reserve_stock) {
+			rc = reserve_row_delta(r_stock, S_QUANTITY, -(int64_t)ol_quantity, &r_stock_local);
+			if (rc != RCOK || r_stock_local == NULL)
+				return Abort;
+		} else
+#endif
+		{
+			r_stock_local = get_row(r_stock, WR);
+			if (r_stock_local == NULL)
+				return Abort;
+		}
+
+		UInt64 s_quantity = *(int64_t *)r_stock_local->get_value(S_QUANTITY);
+#if !TPCC_SMALL
+		int64_t s_ytd;
+		int64_t s_order_cnt;
+		r_stock_local->get_value(S_YTD, s_ytd);
+		r_stock_local->set_value(S_YTD, s_ytd + ol_quantity);
+		r_stock_local->get_value(S_ORDER_CNT, s_order_cnt);
+		r_stock_local->set_value(S_ORDER_CNT, s_order_cnt + 1);
+#endif
+		if (remote) {
+			int64_t s_remote_cnt = *(int64_t*)r_stock_local->get_value(S_REMOTE_CNT);
+			s_remote_cnt ++;
+			r_stock_local->set_value(S_REMOTE_CNT, &s_remote_cnt);
+		}
+		if (!reserve_stock) {
+			uint64_t quantity;
+			if (s_quantity > ol_quantity + 10) {
+				quantity = s_quantity - ol_quantity;
+			} else {
+				quantity = s_quantity - ol_quantity + 91;
+			}
+			r_stock_local->set_value(S_QUANTITY, &quantity);
+		}
+	}
+	return RCOK;
+}
+
+RC tpcc_txn_man::run_agent_new_order_baseline(tpcc_query * query) {
+	uint32_t branch_cnt = g_tpcc_agent_branches;
+	if (branch_cnt == 0)
+		branch_cnt = 1;
+	if (branch_cnt > g_num_wh)
+		branch_cnt = g_num_wh;
+
+#if CC_ALG == OCC_RESERVE
+	bool reserve_stock = true;
+#else
+	bool reserve_stock = false;
+#endif
+	for (uint32_t branch = 0; branch < branch_cnt; branch++) {
+		uint64_t candidate_w_id = ((query->w_id - 1 + branch) % g_num_wh) + 1;
+		RC rc = run_agent_candidate_attempt(query, candidate_w_id, reserve_stock);
+		bool winner = branch == branch_cnt - 1;
+		if (winner) {
+			return finish(rc);
+		}
+		finish(Abort);
+		INC_STATS(get_thd_id(), abort_cnt, 1);
+		stats.abort(get_thd_id());
+#if CC_ALG == OCC || CC_ALG == OCC_RESERVE
+		start_ts = glob_manager->get_ts(get_thd_id());
+#endif
+	}
+	assert(false);
+	return Abort;
+}
+
+RC tpcc_txn_man::run_agent_new_order_reserve(tpcc_query * query) {
+	return run_agent_new_order_reserve_impl(query, true);
+}
+
+RC tpcc_txn_man::run_agent_new_order_reserve_impl(tpcc_query * query, bool enforce_nonnegative) {
+#if CC_ALG == OCC_RESERVE
+	RC rc = RCOK;
+	uint64_t key;
+	itemid_t * item;
+	INDEX * index;
+
+	uint64_t w_id = query->w_id;
+	uint64_t d_id = query->d_id;
+	uint64_t c_id = query->c_id;
+	uint64_t ol_cnt = query->ol_cnt;
+	uint32_t branch_cnt = g_tpcc_agent_branches;
+	if (branch_cnt == 0)
+		branch_cnt = 1;
+	if (branch_cnt > g_num_wh)
+		branch_cnt = g_num_wh;
+
+	begin_agent_branches(branch_cnt);
+	uint64_t winner_supply_w_id = 0;
+	uint32_t winner_branch = 0;
+	assert(ol_cnt <= 16);
+	row_t * winner_stock_rows[16];
+	for (UInt32 i = 0; i < ol_cnt; i++)
+		winner_stock_rows[i] = NULL;
+	for (uint32_t branch = 0; branch < branch_cnt; branch++) {
+		begin_agent_branch(branch);
+		uint64_t candidate_w_id = ((w_id - 1 + branch) % g_num_wh) + 1;
+		bool feasible = true;
+		row_t * candidate_stock_rows[16];
+		for (UInt32 ol_number = 0; ol_number < ol_cnt; ol_number++) {
+			uint64_t ol_i_id = query->items[ol_number].ol_i_id;
+			uint64_t ol_quantity = query->items[ol_number].ol_quantity;
+			uint64_t stock_key = stockKey(ol_i_id, candidate_w_id);
+			itemid_t * stock_item;
+			index_read(_wl->i_stock, stock_key, wh_to_part(candidate_w_id), stock_item);
+			assert(stock_item != NULL);
+			row_t * r_stock = ((row_t *)stock_item->location);
+			candidate_stock_rows[ol_number] = r_stock;
+			int64_t delta = -(int64_t)ol_quantity;
+			if (enforce_nonnegative)
+				rc = reserve_agent_branch_delta(r_stock, S_QUANTITY, delta, true);
+			else
+				rc = reserve_agent_branch_delta_local(r_stock, S_QUANTITY, delta);
+			if (rc != RCOK) {
+				feasible = false;
+				break;
+			}
+		}
+		if (feasible) {
+			winner_supply_w_id = candidate_w_id;
+			winner_branch = branch;
+			for (UInt32 ol_number = 0; ol_number < ol_cnt; ol_number++)
+				winner_stock_rows[ol_number] = candidate_stock_rows[ol_number];
+			if (enforce_nonnegative)
+				break;
+		}
+		if (!feasible || (!enforce_nonnegative && branch != branch_cnt - 1))
+			abort_agent_branch(branch, enforce_nonnegative);
+	}
+
+	if (winner_supply_w_id == 0) {
+		INC_STATS(get_thd_id(), resource_abort_cnt, 1);
+		return finish(Abort);
+	}
+	rc = select_agent_winner(winner_branch, enforce_nonnegative);
+	if (rc != RCOK) {
+		return finish(Abort);
+	}
+
+	key = w_id;
+	index = _wl->i_warehouse;
+	item = index_read(index, key, wh_to_part(w_id));
+	assert(item != NULL);
+	row_t * r_wh = ((row_t *)item->location);
+	row_t * r_wh_local = get_row(r_wh, RD);
+	if (r_wh_local == NULL) {
+		return finish(Abort);
+	}
+
+	double w_tax;
+	r_wh_local->get_value(W_TAX, w_tax);
+	key = custKey(c_id, d_id, w_id);
+	index = _wl->i_customer_id;
+	item = index_read(index, key, wh_to_part(w_id));
+	assert(item != NULL);
+	row_t * r_cust = (row_t *) item->location;
+	row_t * r_cust_local = get_row(r_cust, RD);
+	if (r_cust_local == NULL) {
+		return finish(Abort);
+	}
+	uint64_t c_discount;
+	r_cust_local->get_value(C_DISCOUNT, c_discount);
+
+	key = distKey(d_id, w_id);
+	item = index_read(_wl->i_district, key, wh_to_part(w_id));
+	assert(item != NULL);
+	row_t * r_dist = ((row_t *)item->location);
+	row_t * r_dist_local = get_row(r_dist, WR);
+	if (r_dist_local == NULL) {
+		return finish(Abort);
+	}
+	int64_t o_id;
+	o_id = *(int64_t *) r_dist_local->get_value(D_NEXT_O_ID);
+	o_id ++;
+	r_dist_local->set_value(D_NEXT_O_ID, o_id);
+
+	bool remote = winner_supply_w_id != w_id;
+	for (UInt32 ol_number = 0; ol_number < ol_cnt; ol_number++) {
+		uint64_t ol_i_id = query->items[ol_number].ol_i_id;
+		uint64_t ol_quantity = query->items[ol_number].ol_quantity;
+
+		key = ol_i_id;
+		item = index_read(_wl->i_item, key, 0);
+		assert(item != NULL);
+		row_t * r_item = ((row_t *)item->location);
+		row_t * r_item_local = get_row(r_item, RD);
+		if (r_item_local == NULL) {
+			return finish(Abort);
+		}
+		int64_t i_price;
+		r_item_local->get_value(I_PRICE, i_price);
+
+		row_t * r_stock = winner_stock_rows[ol_number];
+		assert(r_stock != NULL);
+		row_t * r_stock_local = get_agent_reserved_local_row(r_stock);
+		if (r_stock_local == NULL) {
+			return finish(Abort);
+		}
+		if (!enforce_nonnegative) {
+			UInt64 s_quantity = *(int64_t *)r_stock_local->get_value(S_QUANTITY);
+			uint64_t quantity;
+			if (s_quantity > ol_quantity + 10) {
+				quantity = s_quantity - ol_quantity;
+			} else {
+				quantity = s_quantity - ol_quantity + 91;
+			}
+			r_stock_local->set_value(S_QUANTITY, &quantity);
+		}
+
+#if !TPCC_SMALL
+		int64_t s_ytd;
+		int64_t s_order_cnt;
+		r_stock_local->get_value(S_YTD, s_ytd);
+		r_stock_local->set_value(S_YTD, s_ytd + ol_quantity);
+		r_stock_local->get_value(S_ORDER_CNT, s_order_cnt);
+		r_stock_local->set_value(S_ORDER_CNT, s_order_cnt + 1);
+#endif
+		if (remote) {
+			int64_t s_remote_cnt;
+			s_remote_cnt = *(int64_t*)r_stock_local->get_value(S_REMOTE_CNT);
+			s_remote_cnt ++;
+			r_stock_local->set_value(S_REMOTE_CNT, &s_remote_cnt);
+		}
+	}
+	assert(rc == RCOK);
+	return finish(rc);
+#else
+	assert(false);
+	return Abort;
+#endif
 }
 
 RC 

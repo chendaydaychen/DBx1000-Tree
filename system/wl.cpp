@@ -91,6 +91,9 @@ RC workload::init_schema(string schema_file) {
 	#elif WORKLOAD == TPCC
 			assert(tables[tname] != NULL);
 			index->init(part_cnt, tables[tname], stoi( items[1] ) * part_cnt);
+	#elif WORKLOAD == TEST
+			assert(tables[tname] != NULL);
+			index->init(part_cnt, tables[tname], stoi( items[1] ) * part_cnt);
 	#endif
 #else
 			index->init(part_cnt, tables[tname]);
@@ -123,5 +126,4 @@ void workload::index_insert(INDEX * index, uint64_t key, row_t * row, int64_t pa
 
     assert( index->index_insert(key, m_item, pid) == RCOK );
 }
-
 

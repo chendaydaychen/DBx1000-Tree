@@ -35,9 +35,13 @@ void print_usage() {
 	printf("\t-nINT       ; NUM_WH\n");
 	printf("\t-TpFLOAT    ; PERC_PAYMENT\n");
 	printf("\t-TuINT      ; WH_UPDATE\n");
+	printf("\t-TbINT      ; TPCC_AGENT_BRANCHES\n");
 	printf("  [TEST]:\n");
 	printf("\t-Ar         ; Test READ_WRITE\n");
 	printf("\t-Ac         ; Test CONFLIT\n");
+	printf("\t-As         ; Test OCC_RESERVE success\n");
+	printf("\t-Ab         ; Test OCC_RESERVE abort release\n");
+	printf("\t-Ao         ; Test OCC_RESERVE overdraw\n");
 }
 
 void parser(int argc, char * argv[]) {
@@ -105,11 +109,19 @@ void parser(int argc, char * argv[]) {
 				g_perc_payment = atof( &argv[i][3] );
 			if (argv[i][2] == 'u')
 				g_wh_update = atoi( &argv[i][3] );
+			if (argv[i][2] == 'b')
+				g_tpcc_agent_branches = atoi( &argv[i][3] );
 		} else if (argv[i][1] == 'A') {
 			if (argv[i][2] == 'r')
 				g_test_case = READ_WRITE;
 			if (argv[i][2] == 'c')
 				g_test_case = CONFLICT;
+			if (argv[i][2] == 's')
+				g_test_case = RESERVE_SUCCESS;
+			if (argv[i][2] == 'b')
+				g_test_case = RESERVE_ABORT_RELEASE;
+			if (argv[i][2] == 'o')
+				g_test_case = RESERVE_OVERDRAW;
 		}
 		else if (argv[i][1] == 'o') {
 			i++;

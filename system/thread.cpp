@@ -55,6 +55,7 @@ RC thread_t::run() {
 	base_query * m_query = NULL;
 	uint64_t thd_txn_id = 0;
 	UInt64 txn_cnt = 0;
+	UInt64 attempt_cnt = 0;
 
 	while (true) {
 		ts_t starttime = get_sys_clock();
@@ -121,7 +122,7 @@ RC thread_t::run() {
 		vll_man.vllMainLoop(m_txn, m_query);
 #elif CC_ALG == MVCC || CC_ALG == HEKATON
 		glob_manager->add_ts(get_thd_id(), m_txn->get_ts());
-#elif CC_ALG == OCC
+#elif CC_ALG == OCC || CC_ALG == OCC_RESERVE
 		// In the original OCC paper, start_ts only reads the current ts without advancing it.
 		// But we advance the global ts here to simplify the implementation. However, the final
 		// results should be the same.
@@ -174,11 +175,13 @@ RC thread_t::run() {
 			INC_STATS(get_thd_id(), txn_cnt, 1);
 			stats.commit(get_thd_id());
 			txn_cnt ++;
+			attempt_cnt ++;
 		} else if (rc == Abort) {
 			INC_STATS(get_thd_id(), time_abort, timespan);
 			INC_STATS(get_thd_id(), abort_cnt, 1);
 			stats.abort(get_thd_id());
 			m_txn->abort_cnt ++;
+			attempt_cnt ++;
 		}
 
 		if (rc == FINISH)
@@ -189,8 +192,8 @@ RC thread_t::run() {
 			return FINISH;
 		}
 
-		if (warmup_finish && txn_cnt >= MAX_TXN_PER_PART) {
-			assert(txn_cnt == MAX_TXN_PER_PART);
+		UInt64 done_cnt = STOP_ON_ATTEMPTS ? attempt_cnt : txn_cnt;
+		if (warmup_finish && done_cnt >= MAX_TXN_PER_PART) {
 	        if( !ATOM_CAS(_wl->sim_done, false, true) )
 				assert( _wl->sim_done);
 	    }
@@ -223,7 +226,7 @@ RC thread_t::runTest(txn_man * txn)
 	RC rc = RCOK;
 	if (g_test_case == READ_WRITE) {
 		rc = ((TestTxnMan *)txn)->run_txn(g_test_case, 0);
-#if CC_ALG == OCC
+#if CC_ALG == OCC || CC_ALG == OCC_RESERVE
 		txn->start_ts = get_next_ts(); 
 #endif
 		rc = ((TestTxnMan *)txn)->run_txn(g_test_case, 1);
@@ -236,6 +239,12 @@ RC thread_t::runTest(txn_man * txn)
 			return FINISH;
 		else 
 			return rc;
+	}
+	else if (g_test_case == RESERVE_SUCCESS ||
+			 g_test_case == RESERVE_ABORT_RELEASE ||
+			 g_test_case == RESERVE_OVERDRAW) {
+		rc = ((TestTxnMan *)txn)->run_txn(g_test_case, 0);
+		return rc;
 	}
 	assert(false);
 	return RCOK;

@@ -91,7 +91,7 @@ public:
   	Row_mvcc * manager;
   #elif CC_ALG == HEKATON
   	Row_hekaton * manager;
-  #elif CC_ALG == OCC
+  #elif CC_ALG == OCC || CC_ALG == OCC_RESERVE
   	Row_occ * manager;
   #elif CC_ALG == TICTOC
   	Row_tictoc * manager;

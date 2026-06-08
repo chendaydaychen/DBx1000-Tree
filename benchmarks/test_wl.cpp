@@ -35,7 +35,7 @@ RC TestWorkload::init_table() {
 		new_row->set_primary_key(primary_key);
         new_row->set_value(0, rid);
         new_row->set_value(1, 0);
-        new_row->set_value(2, 0);
+        new_row->set_value(2, 10UL);
         itemid_t * m_item = (itemid_t *) mem_allocator.alloc( sizeof(itemid_t), part_id );
 		assert(m_item != NULL);
 		m_item->type = DT_row;
