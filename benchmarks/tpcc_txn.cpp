@@ -26,6 +26,8 @@ RC tpcc_txn_man::run_txn(base_query * query) {
 			return run_payment(m_query); break;
 		case TPCC_NEW_ORDER :
 			return run_new_order(m_query); break;
+		case TPCC_NEW_ORDER_SEMANTIC :
+			return run_new_order_semantic(m_query); break;
 		case TPCC_NEW_ORDER_RESERVE :
 			return run_new_order(m_query); break;
 		case TPCC_NEW_ORDER_RESERVE_STANDARD :
@@ -477,6 +479,131 @@ RC tpcc_txn_man::run_new_order(tpcc_query * query) {
 	return finish(rc);
 }
 
+RC tpcc_txn_man::run_new_order_semantic(tpcc_query * query) {
+#if IS_AET_CC
+	RC rc = RCOK;
+	uint64_t key;
+	itemid_t * item;
+	INDEX * index;
+
+	bool remote = query->remote;
+	uint64_t w_id = query->w_id;
+	uint64_t d_id = query->d_id;
+	uint64_t c_id = query->c_id;
+	uint64_t ol_cnt = query->ol_cnt;
+
+	begin_agent_branches(1);
+	begin_agent_branch(0);
+
+	key = w_id;
+	index = _wl->i_warehouse;
+	item = index_read(index, key, wh_to_part(w_id));
+	assert(item != NULL);
+	row_t * r_wh = ((row_t *)item->location);
+	row_t * r_wh_local = get_row(r_wh, RD);
+	if (r_wh_local == NULL)
+		return finish(Abort);
+	double w_tax;
+	r_wh_local->get_value(W_TAX, w_tax);
+
+	key = custKey(c_id, d_id, w_id);
+	index = _wl->i_customer_id;
+	item = index_read(index, key, wh_to_part(w_id));
+	assert(item != NULL);
+	row_t * r_cust = (row_t *) item->location;
+	row_t * r_cust_local = get_row(r_cust, RD);
+	if (r_cust_local == NULL)
+		return finish(Abort);
+	uint64_t c_discount;
+	r_cust_local->get_value(C_DISCOUNT, c_discount);
+
+	key = distKey(d_id, w_id);
+	item = index_read(_wl->i_district, key, wh_to_part(w_id));
+	assert(item != NULL);
+	row_t * r_dist = ((row_t *)item->location);
+	rc = reserve_agent_branch_delta_commit_local(r_dist, D_NEXT_O_ID, 1);
+	if (rc != RCOK)
+		return finish(Abort);
+
+	for (UInt32 ol_number = 0; ol_number < ol_cnt; ol_number++) {
+		uint64_t ol_i_id = query->items[ol_number].ol_i_id;
+		uint64_t ol_supply_w_id = query->items[ol_number].ol_supply_w_id;
+		uint64_t ol_quantity = query->items[ol_number].ol_quantity;
+
+		key = ol_i_id;
+		item = index_read(_wl->i_item, key, 0);
+		assert(item != NULL);
+		row_t * r_item = ((row_t *)item->location);
+		row_t * r_item_local = get_row(r_item, RD);
+		if (r_item_local == NULL)
+			return finish(Abort);
+		int64_t i_price;
+		r_item_local->get_value(I_PRICE, i_price);
+
+		uint64_t stock_key = stockKey(ol_i_id, ol_supply_w_id);
+		itemid_t * stock_item;
+		index_read(_wl->i_stock, stock_key, wh_to_part(ol_supply_w_id), stock_item);
+		assert(stock_item != NULL);
+		row_t * r_stock = ((row_t *)stock_item->location);
+
+#if CC_ALG == AET_HYBRID_CC
+		rc = record_agent_tpcc_stock_update(r_stock, S_QUANTITY, ol_quantity);
+		if (rc != RCOK)
+			return finish(Abort);
+#else
+		record_agent_read_intent(r_stock, S_QUANTITY, AGENT_READ_STRICT);
+		int64_t committed_quantity = 0;
+		r_stock->get_value(S_QUANTITY, committed_quantity);
+		int64_t next_quantity;
+		if ((uint64_t)committed_quantity > ol_quantity + 10) {
+			next_quantity = committed_quantity - (int64_t)ol_quantity;
+		} else {
+			next_quantity = committed_quantity - (int64_t)ol_quantity + 91;
+		}
+		rc = reserve_agent_branch_delta_local(r_stock, S_QUANTITY,
+				next_quantity - committed_quantity);
+		if (rc != RCOK)
+			return finish(Abort);
+#endif
+#if !TPCC_SMALL
+#if CC_ALG == AET_HYBRID_CC
+		rc = reserve_agent_branch_delta_commit_local(r_stock, S_YTD, ol_quantity);
+#else
+		rc = reserve_agent_branch_delta_local(r_stock, S_YTD, ol_quantity);
+#endif
+		if (rc != RCOK)
+			return finish(Abort);
+#if CC_ALG == AET_HYBRID_CC
+		rc = reserve_agent_branch_delta_commit_local(r_stock, S_ORDER_CNT, 1);
+#else
+		rc = reserve_agent_branch_delta_local(r_stock, S_ORDER_CNT, 1);
+#endif
+		if (rc != RCOK)
+			return finish(Abort);
+#endif
+		if (remote) {
+#if CC_ALG == AET_HYBRID_CC
+			rc = reserve_agent_branch_delta_commit_local(r_stock, S_REMOTE_CNT, 1);
+#else
+			rc = reserve_agent_branch_delta_local(r_stock, S_REMOTE_CNT, 1);
+#endif
+			if (rc != RCOK)
+				return finish(Abort);
+		}
+	}
+
+	rc = select_agent_winner(0, false);
+	if (rc != RCOK)
+		return finish(Abort);
+
+	assert(rc == RCOK);
+	return finish(rc);
+#else
+	assert(false);
+	return Abort;
+#endif
+}
+
 RC tpcc_txn_man::run_agent_candidate_attempt(tpcc_query * query, uint64_t supply_w_id, bool reserve_stock) {
 	RC rc = RCOK;
 #if CC_ALG != OCC_RESERVE
@@ -662,14 +789,30 @@ RC tpcc_txn_man::run_agent_new_order_reserve_impl(tpcc_query * query, bool enfor
 			index_read(_wl->i_stock, stock_key, wh_to_part(candidate_w_id), stock_item);
 			assert(stock_item != NULL);
 			row_t * r_stock = ((row_t *)stock_item->location);
+#if CC_ALG == AET_HYBRID_CC
+			if (enforce_nonnegative)
+				record_agent_read_intent(r_stock, S_QUANTITY, AGENT_READ_FEASIBILITY);
+#else
 			record_agent_read_intent(r_stock, S_QUANTITY,
 					enforce_nonnegative ? AGENT_READ_FEASIBILITY : AGENT_READ_STRICT);
+#endif
 			candidate_stock_rows[ol_number] = r_stock;
 			int64_t delta = -(int64_t)ol_quantity;
 			if (enforce_nonnegative)
 				rc = reserve_agent_branch_delta(r_stock, S_QUANTITY, delta, true);
-			else
+			else {
+#if CC_ALG == AET_HYBRID_CC
+				rc = record_agent_tpcc_stock_update(r_stock, S_QUANTITY, ol_quantity);
+				if (rc == RCOK)
+					rc = reserve_agent_branch_delta_commit_local(r_stock, S_YTD, ol_quantity);
+				if (rc == RCOK)
+					rc = reserve_agent_branch_delta_commit_local(r_stock, S_ORDER_CNT, 1);
+				if (rc == RCOK && candidate_w_id != w_id)
+					rc = reserve_agent_branch_delta_commit_local(r_stock, S_REMOTE_CNT, 1);
+#else
 				rc = reserve_agent_branch_delta_local(r_stock, S_QUANTITY, delta);
+#endif
+			}
 			if (rc != RCOK) {
 				feasible = false;
 				break;
@@ -694,7 +837,7 @@ RC tpcc_txn_man::run_agent_new_order_reserve_impl(tpcc_query * query, bool enfor
 		INC_STATS(get_thd_id(), resource_abort_cnt, 1);
 		return finish(Abort);
 	}
-	rc = reserve_agent_branch_delta_local_for_branch(winner_branch,
+	rc = reserve_agent_branch_delta_commit_local_for_branch(winner_branch,
 			root_dist, D_NEXT_O_ID, dist_next_o_id_delta);
 	if (rc != RCOK) {
 		return finish(Abort);
@@ -750,6 +893,10 @@ RC tpcc_txn_man::run_agent_new_order_reserve_impl(tpcc_query * query, bool enfor
 
 		row_t * r_stock = winner_stock_rows[ol_number];
 		assert(r_stock != NULL);
+#if CC_ALG == AET_HYBRID_CC
+		if (!enforce_nonnegative)
+			continue;
+#endif
 		row_t * r_stock_local = get_agent_reserved_local_row(r_stock);
 		if (r_stock_local == NULL) {
 			return finish(Abort);

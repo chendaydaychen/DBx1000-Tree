@@ -77,15 +77,16 @@ RC AgentTxnManager::record_read_intent(row_t * row, int col_id, AgentReadMode mo
 	return RCOK;
 }
 
-RC AgentTxnManager::record_delta_intent(row_t * row, int col_id, int64_t delta, bool global_reserved) {
+RC AgentTxnManager::record_delta_intent(row_t * row, int col_id, int64_t delta,
+		bool global_reserved, bool commit_time_merge) {
 	assert(active_branch);
 	assert(current_branch_id < branch_cnt);
 	return record_delta_intent_for_branch(current_branch_id, row, col_id,
-			delta, global_reserved);
+			delta, global_reserved, commit_time_merge);
 }
 
 RC AgentTxnManager::record_delta_intent_for_branch(uint32_t branch_id, row_t * row, int col_id,
-		int64_t delta, bool global_reserved) {
+		int64_t delta, bool global_reserved, bool commit_time_merge) {
 	assert(branch_id < branch_cnt);
 	AgentDeltaIntent intent;
 	intent.type = AGENT_INTENT_DELTA;
@@ -93,6 +94,31 @@ RC AgentTxnManager::record_delta_intent_for_branch(uint32_t branch_id, row_t * r
 	intent.col_id = col_id;
 	intent.delta = delta;
 	intent.global_reserved = global_reserved;
+	intent.commit_time_merge = commit_time_merge;
+	intent.quantity = 0;
+	branches[branch_id].delta_intents.push_back(intent);
+	return RCOK;
+}
+
+RC AgentTxnManager::record_tpcc_stock_update_intent(row_t * row, int col_id,
+		uint64_t quantity) {
+	assert(active_branch);
+	assert(current_branch_id < branch_cnt);
+	return record_tpcc_stock_update_intent_for_branch(current_branch_id, row,
+			col_id, quantity);
+}
+
+RC AgentTxnManager::record_tpcc_stock_update_intent_for_branch(uint32_t branch_id,
+		row_t * row, int col_id, uint64_t quantity) {
+	assert(branch_id < branch_cnt);
+	AgentDeltaIntent intent;
+	intent.type = AGENT_INTENT_TPCC_STOCK_UPDATE;
+	intent.row = row;
+	intent.col_id = col_id;
+	intent.delta = 0;
+	intent.global_reserved = false;
+	intent.commit_time_merge = true;
+	intent.quantity = quantity;
 	branches[branch_id].delta_intents.push_back(intent);
 	return RCOK;
 }

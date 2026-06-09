@@ -11,6 +11,7 @@
 #include "row_occ.h"
 #include "row_tictoc.h"
 #include "row_silo.h"
+#include "row_aet_hybrid.h"
 #include "row_vll.h"
 #include "mem_alloc.h"
 #include "manager.h"
@@ -46,12 +47,14 @@ void row_t::init_manager(row_t * row) {
     manager = (Row_mvcc *) _mm_malloc(sizeof(Row_mvcc), 64);
 #elif CC_ALG == HEKATON
     manager = (Row_hekaton *) _mm_malloc(sizeof(Row_hekaton), 64);
-#elif CC_ALG == OCC || IS_OCC_AET
+#elif CC_ALG == OCC || (IS_OCC_AET && !IS_AET_HYBRID_CC)
     manager = (Row_occ *) mem_allocator.alloc(sizeof(Row_occ), _part_id);
 #elif CC_ALG == TICTOC
 	manager = (Row_tictoc *) _mm_malloc(sizeof(Row_tictoc), 64);
 #elif IS_SILO_CC
 	manager = (Row_silo *) _mm_malloc(sizeof(Row_silo), 64);
+#elif IS_AET_HYBRID_CC
+	manager = (Row_aet_hybrid *) _mm_malloc(sizeof(Row_aet_hybrid), 64);
 #elif CC_ALG == VLL
     manager = (Row_vll *) mem_allocator.alloc(sizeof(Row_vll), _part_id);
 #endif
@@ -239,14 +242,14 @@ RC row_t::get_row(access_t type, txn_man * txn, row_t *& row) {
 		assert(row->get_schema() == this->get_schema());
 	}
 	return rc;
-#elif CC_ALG == OCC || IS_OCC_AET
+#elif CC_ALG == OCC || (IS_OCC_AET && !IS_AET_HYBRID_CC)
 	// OCC always make a local copy regardless of read or write
 	txn->cur_row = (row_t *) mem_allocator.alloc(sizeof(row_t), get_part_id());
 	txn->cur_row->init(get_table(), get_part_id());
 	rc = this->manager->access(txn, R_REQ);
 	row = txn->cur_row;
 	return rc;
-#elif CC_ALG == TICTOC || IS_SILO_CC
+#elif CC_ALG == TICTOC || IS_SILO_CC || IS_AET_HYBRID_CC
 	// like OCC, tictoc also makes a local copy for each read/write
 	row->table = get_table();
 	TsType ts_type = (type == RD)? R_REQ : P_REQ; 
@@ -292,14 +295,14 @@ void row_t::return_row(access_t type, txn_man * txn, row_t * row) {
 		RC rc = this->manager->access(txn, W_REQ, row);
 		assert(rc == RCOK);
 	}
-#elif CC_ALG == OCC || IS_OCC_AET
+#elif CC_ALG == OCC || (IS_OCC_AET && !IS_AET_HYBRID_CC)
 	assert (row != NULL);
 	if (type == WR)
 		manager->write( row, txn->end_ts );
 	row->free_row();
 	mem_allocator.free(row, sizeof(row_t));
 	return;
-#elif CC_ALG == TICTOC || IS_SILO_CC
+#elif CC_ALG == TICTOC || IS_SILO_CC || IS_AET_HYBRID_CC
 	assert (row != NULL);
 	return;
 #elif CC_ALG == HSTORE || CC_ALG == VLL

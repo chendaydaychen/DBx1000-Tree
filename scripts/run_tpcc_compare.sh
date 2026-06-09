@@ -154,9 +154,27 @@ run_agent_baseline_all_cc() {
   done
 }
 
+run_native_new_order_all_cc() {
+  local alg
+  IFS=',' read -ra algs <<< "$CC_ALGS"
+  for alg in "${algs[@]}"; do
+    alg="${alg//[[:space:]]/}"
+    [[ -z "$alg" ]] && continue
+    local alg_lc
+    alg_lc="$(lower_name "$alg")"
+    run_case "tpcc_${alg_lc}_new_order" "$alg" "TPCC_NEW_ORDER" "1"
+  done
+}
+
 rm -f "$OUT_DIR/summary.csv"
+case_enabled "tpcc_new_order_all_cc" && run_native_new_order_all_cc
 case_enabled "tpcc_agent_new_order_baseline_all_cc" && run_agent_baseline_all_cc
 case_enabled "tpcc_occ_new_order" && run_case "tpcc_occ_new_order" "OCC" "TPCC_NEW_ORDER"
+case_enabled "tpcc_silo_new_order" && run_case "tpcc_silo_new_order" "SILO" "TPCC_NEW_ORDER"
+case_enabled "tpcc_tictoc_new_order" && run_case "tpcc_tictoc_new_order" "TICTOC" "TPCC_NEW_ORDER"
+case_enabled "tpcc_aet_hybrid_new_order_semantic" && run_case "tpcc_aet_hybrid_new_order_semantic" "AET_HYBRID_RULE" "TPCC_NEW_ORDER_SEMANTIC"
+case_enabled "tpcc_aet_hybrid_silo_new_order_semantic" && run_case "tpcc_aet_hybrid_silo_new_order_semantic" "AET_HYBRID_SILO" "TPCC_NEW_ORDER_SEMANTIC"
+case_enabled "tpcc_aet_hybrid_cc_new_order_semantic" && run_case "tpcc_aet_hybrid_cc_new_order_semantic" "AET_HYBRID_CC" "TPCC_NEW_ORDER_SEMANTIC"
 case_enabled "tpcc_occ_reserve_standard_new_order" && run_case "tpcc_occ_reserve_standard_new_order" "OCC_RESERVE" "TPCC_NEW_ORDER_RESERVE_STANDARD"
 case_enabled "tpcc_occ_reserve_new_order" && run_case "tpcc_occ_reserve_new_order" "OCC_RESERVE" "TPCC_NEW_ORDER_RESERVE"
 case_enabled "tpcc_agent_new_order_baseline_occ_b1" && run_case "tpcc_agent_new_order_baseline_occ_b1" "OCC" "TPCC_AGENT_NEW_ORDER_BASELINE" "1"
@@ -183,6 +201,9 @@ case_enabled "tpcc_agent_new_order_aet_hybrid_standard_b8" && run_case "tpcc_age
 case_enabled "tpcc_agent_new_order_aet_hybrid_silo_standard_b1" && run_case "tpcc_agent_new_order_aet_hybrid_silo_standard_b1" "AET_HYBRID_SILO" "TPCC_AGENT_NEW_ORDER_RESERVE_STANDARD" "1"
 case_enabled "tpcc_agent_new_order_aet_hybrid_silo_standard_b4" && run_case "tpcc_agent_new_order_aet_hybrid_silo_standard_b4" "AET_HYBRID_SILO" "TPCC_AGENT_NEW_ORDER_RESERVE_STANDARD" "4"
 case_enabled "tpcc_agent_new_order_aet_hybrid_silo_standard_b8" && run_case "tpcc_agent_new_order_aet_hybrid_silo_standard_b8" "AET_HYBRID_SILO" "TPCC_AGENT_NEW_ORDER_RESERVE_STANDARD" "8"
+case_enabled "tpcc_agent_new_order_aet_hybrid_cc_standard_b1" && run_case "tpcc_agent_new_order_aet_hybrid_cc_standard_b1" "AET_HYBRID_CC" "TPCC_AGENT_NEW_ORDER_RESERVE_STANDARD" "1"
+case_enabled "tpcc_agent_new_order_aet_hybrid_cc_standard_b4" && run_case "tpcc_agent_new_order_aet_hybrid_cc_standard_b4" "AET_HYBRID_CC" "TPCC_AGENT_NEW_ORDER_RESERVE_STANDARD" "4"
+case_enabled "tpcc_agent_new_order_aet_hybrid_cc_standard_b8" && run_case "tpcc_agent_new_order_aet_hybrid_cc_standard_b8" "AET_HYBRID_CC" "TPCC_AGENT_NEW_ORDER_RESERVE_STANDARD" "8"
 case_enabled "tpcc_agent_new_order_aet_hybrid_reserve_b1" && run_case "tpcc_agent_new_order_aet_hybrid_reserve_b1" "AET_HYBRID_RULE" "TPCC_AGENT_NEW_ORDER_RESERVE" "1"
 case_enabled "tpcc_agent_new_order_aet_hybrid_reserve_b4" && run_case "tpcc_agent_new_order_aet_hybrid_reserve_b4" "AET_HYBRID_RULE" "TPCC_AGENT_NEW_ORDER_RESERVE" "4"
 case_enabled "tpcc_agent_new_order_aet_hybrid_reserve_b8" && run_case "tpcc_agent_new_order_aet_hybrid_reserve_b8" "AET_HYBRID_RULE" "TPCC_AGENT_NEW_ORDER_RESERVE" "8"

@@ -13,6 +13,10 @@ void tpcc_query::init(uint64_t thd_id, workload * h_wl) {
 		gen_payment(thd_id);
 	else if (g_tpcc_txn_type == TPCC_NEW_ORDER)
 		gen_new_order(thd_id);
+	else if (g_tpcc_txn_type == TPCC_NEW_ORDER_SEMANTIC) {
+		gen_new_order(thd_id);
+		type = TPCC_NEW_ORDER_SEMANTIC;
+	}
 	else if (g_tpcc_txn_type == TPCC_NEW_ORDER_RESERVE) {
 		gen_new_order(thd_id);
 		type = TPCC_NEW_ORDER_RESERVE;

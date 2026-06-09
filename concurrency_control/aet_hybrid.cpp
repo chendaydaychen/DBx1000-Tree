@@ -18,10 +18,15 @@ public:
 		std::vector<AgentWriteIntent> xwrite_intents;
 
 		for (uint64_t i = 0; i < delta_intents.size(); i++) {
-			if (delta_intents[i].type != AGENT_INTENT_DELTA)
+			if (delta_intents[i].type != AGENT_INTENT_DELTA &&
+					delta_intents[i].type != AGENT_INTENT_TPCC_STOCK_UPDATE)
 				return Abort;
-			if (choose_aet_policy(delta_intents[i].type) == POLICY_DELTA_RESERVATION)
+			if (delta_intents[i].type == AGENT_INTENT_DELTA &&
+					choose_aet_policy(delta_intents[i].type) == POLICY_DELTA_RESERVATION) {
 				INC_STATS(txn->get_thd_id(), aet_policy_delta_cnt, 1);
+			} else if (delta_intents[i].type == AGENT_INTENT_TPCC_STOCK_UPDATE) {
+				INC_STATS(txn->get_thd_id(), aet_policy_delta_cnt, 1);
+			}
 		}
 		cas_intents.reserve(write_intents.size());
 		xwrite_intents.reserve(write_intents.size());

@@ -68,6 +68,7 @@ private:
 	tpcc_wl * _wl;
 	RC run_payment(tpcc_query * m_query);
 	RC run_new_order(tpcc_query * m_query);
+	RC run_new_order_semantic(tpcc_query * m_query);
 	RC run_agent_new_order_baseline(tpcc_query * m_query);
 	RC run_agent_candidate_attempt(tpcc_query * m_query, uint64_t supply_w_id, bool reserve_stock);
 	RC run_agent_new_order_reserve(tpcc_query * m_query);

@@ -27,7 +27,7 @@ public:
 #if CC_ALG == TICTOC
 	ts_t 		wts;
 	ts_t 		rts;
-#elif IS_SILO_CC
+#elif IS_SILO_CC || IS_AET_HYBRID_CC
 	ts_t 		tid;
 	ts_t 		epoch;
 #elif CC_ALG == HEKATON
@@ -80,6 +80,12 @@ public:
 	RC				reserve_agent_branch_delta_local(row_t * row, int col_id, int64_t delta);
 	RC				reserve_agent_branch_delta_local_for_branch(uint32_t branch_id,
 						row_t * row, int col_id, int64_t delta);
+	RC				reserve_agent_branch_delta_commit_local(row_t * row, int col_id, int64_t delta);
+	RC				reserve_agent_branch_delta_commit_local_for_branch(uint32_t branch_id,
+						row_t * row, int col_id, int64_t delta);
+	RC				record_agent_tpcc_stock_update(row_t * row, int col_id, uint64_t quantity);
+	RC				record_agent_tpcc_stock_update_for_branch(uint32_t branch_id,
+						row_t * row, int col_id, uint64_t quantity);
 	RC				record_agent_cas_intent(row_t * row, int col_id,
 						const void * expected_value, uint32_t expected_size,
 						const void * new_value, uint32_t new_size);
@@ -110,7 +116,7 @@ public:
 	void 			update_max_wts(ts_t max_wts);
 	ts_t 			last_wts;
 	ts_t 			last_rts;
-#elif IS_SILO_CC
+#elif IS_SILO_CC || IS_AET_HYBRID_CC
 	ts_t 			last_tid;
 #endif
 	
@@ -141,11 +147,21 @@ private:
 	int64_t			reservation_deltas[MAX_ROW_PER_TXN];
 	AgentTxnManager agent_txn;
 #endif
+#if IS_AET_HYBRID_CC
+	uint64_t		semantic_delta_cnt;
+	row_t *			semantic_delta_rows[MAX_ROW_PER_TXN];
+	int				semantic_delta_cols[MAX_ROW_PER_TXN];
+	int64_t			semantic_delta_deltas[MAX_ROW_PER_TXN];
+	uint64_t		semantic_stock_update_cnt;
+	row_t *			semantic_stock_update_rows[MAX_ROW_PER_TXN];
+	int				semantic_stock_update_cols[MAX_ROW_PER_TXN];
+	uint64_t		semantic_stock_update_quantities[MAX_ROW_PER_TXN];
+#endif
 	txnid_t 		txn_id;
 	ts_t 			timestamp;
 
 	bool _write_copy_ptr;
-#if CC_ALG == TICTOC || IS_SILO_CC
+#if CC_ALG == TICTOC || IS_SILO_CC || IS_AET_HYBRID_CC
 	bool 			_pre_abort;
 	bool 			_validation_no_wait;
 #endif
@@ -157,6 +173,9 @@ private:
 #elif IS_SILO_CC
 	ts_t 			_cur_tid;
 	RC				validate_silo();
+#elif IS_AET_HYBRID_CC
+	ts_t 			_cur_tid;
+	RC				validate_aet_hybrid_cc();
 #elif CC_ALG == HEKATON
 	RC 				validate_hekaton(RC rc);
 #endif

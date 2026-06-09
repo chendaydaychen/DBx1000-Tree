@@ -11,6 +11,7 @@
 #include "index_hash.h"
 #include "row_occ.h"
 #include "row_silo.h"
+#include "row_aet_hybrid.h"
 #include "aet_cc_policy.h"
 
 #if IS_AET_CC
@@ -52,15 +53,29 @@ namespace {
 	}
 
 	uint64_t current_row_version(row_t * row) {
-#if IS_SILO_CC
 		return row->manager->get_version();
+	}
+
+	uint64_t current_semantic_version(row_t * row, int col_id) {
+#if IS_AET_HYBRID_CC
+		return row->manager->get_col_version(col_id);
 #else
+		(void)col_id;
 		return row->manager->get_version();
 #endif
 	}
 
+	bool validate_semantic_version(row_t * row, int col_id, uint64_t version) {
+#if IS_AET_HYBRID_CC
+		return row->manager->validate_col(col_id, version);
+#else
+		(void)col_id;
+		return row->manager->get_version() == version;
+#endif
+	}
+
 	void aet_row_latch(row_t * row) {
-#if CC_ALG == AET_HYBRID_SILO
+#if CC_ALG == AET_HYBRID_SILO || IS_AET_HYBRID_CC
 		row->manager->lock();
 #else
 		row->manager->latch();
@@ -131,11 +146,15 @@ void txn_man::init(thread_t * h_thd, workload * h_wl, uint64_t thd_id) {
 	reservation_cnt = 0;
 	agent_txn.abort_agent_txn();
 #endif
+#if IS_AET_HYBRID_CC
+	semantic_delta_cnt = 0;
+	semantic_stock_update_cnt = 0;
+#endif
 	accesses = (Access **) _mm_malloc(sizeof(Access *) * MAX_ROW_PER_TXN, 64);
 	for (int i = 0; i < MAX_ROW_PER_TXN; i++)
 		accesses[i] = NULL;
 	num_accesses_alloc = 0;
-#if CC_ALG == TICTOC || IS_SILO_CC
+#if CC_ALG == TICTOC || IS_SILO_CC || IS_AET_HYBRID_CC
 	_pre_abort = (g_params["pre_abort"] == "true");
 	if (g_params["validation_lock"] == "no-wait")
 		_validation_no_wait = true;
@@ -148,7 +167,7 @@ void txn_man::init(thread_t * h_thd, workload * h_wl, uint64_t thd_id) {
 	_max_wts = 0;
 	_write_copy_ptr = (g_params["write_copy_form"] == "ptr");
 	_atomic_timestamp = (g_params["atomic_timestamp"] == "true");
-#elif IS_SILO_CC
+#elif IS_SILO_CC || IS_AET_HYBRID_CC
 	_cur_tid = 0;
 #endif
 
@@ -207,7 +226,7 @@ RC txn_man::begin_agent_branch(uint32_t branch_id) {
 
 RC txn_man::record_agent_read_intent(row_t * row, int col_id, AgentReadMode mode) {
 	aet_row_latch(row);
-	uint64_t version = current_row_version(row);
+	uint64_t version = current_semantic_version(row, col_id);
 	aet_row_release(row);
 	return agent_txn.record_read_intent(row, col_id, mode, version, start_ts);
 }
@@ -229,11 +248,32 @@ RC txn_man::reserve_agent_branch_delta_local_for_branch(uint32_t branch_id,
 			delta, false);
 }
 
+RC txn_man::reserve_agent_branch_delta_commit_local(row_t * row, int col_id, int64_t delta) {
+	return agent_txn.record_delta_intent(row, col_id, delta, false, true);
+}
+
+RC txn_man::reserve_agent_branch_delta_commit_local_for_branch(uint32_t branch_id,
+		row_t * row, int col_id, int64_t delta) {
+	return agent_txn.record_delta_intent_for_branch(branch_id, row, col_id,
+			delta, false, true);
+}
+
+RC txn_man::record_agent_tpcc_stock_update(row_t * row, int col_id,
+		uint64_t quantity) {
+	return agent_txn.record_tpcc_stock_update_intent(row, col_id, quantity);
+}
+
+RC txn_man::record_agent_tpcc_stock_update_for_branch(uint32_t branch_id,
+		row_t * row, int col_id, uint64_t quantity) {
+	return agent_txn.record_tpcc_stock_update_intent_for_branch(branch_id, row,
+			col_id, quantity);
+}
+
 RC txn_man::record_agent_cas_intent(row_t * row, int col_id,
 		const void * expected_value, uint32_t expected_size,
 		const void * new_value, uint32_t new_size) {
 	aet_row_latch(row);
-	uint64_t version = current_row_version(row);
+	uint64_t version = current_semantic_version(row, col_id);
 	aet_row_release(row);
 	return agent_txn.record_cas_intent(row, col_id, version,
 			expected_value, expected_size, new_value, new_size);
@@ -244,7 +284,7 @@ RC txn_man::record_agent_cas_intent_for_branch(uint32_t branch_id,
 		const void * expected_value, uint32_t expected_size,
 		const void * new_value, uint32_t new_size) {
 	aet_row_latch(row);
-	uint64_t version = current_row_version(row);
+	uint64_t version = current_semantic_version(row, col_id);
 	aet_row_release(row);
 	return agent_txn.record_cas_intent_for_branch(branch_id, row, col_id, version,
 			expected_value, expected_size, new_value, new_size);
@@ -253,7 +293,7 @@ RC txn_man::record_agent_cas_intent_for_branch(uint32_t branch_id,
 RC txn_man::record_agent_xwrite_intent(row_t * row, int col_id,
 		const void * new_value, uint32_t new_size) {
 	aet_row_latch(row);
-	uint64_t version = current_row_version(row);
+	uint64_t version = current_semantic_version(row, col_id);
 	aet_row_release(row);
 	return agent_txn.record_xwrite_intent(row, col_id, version, new_value, new_size);
 }
@@ -262,7 +302,7 @@ RC txn_man::record_agent_xwrite_intent_for_branch(uint32_t branch_id,
 		row_t * row, int col_id,
 		const void * new_value, uint32_t new_size) {
 	aet_row_latch(row);
-	uint64_t version = current_row_version(row);
+	uint64_t version = current_semantic_version(row, col_id);
 	aet_row_release(row);
 	return agent_txn.record_xwrite_intent_for_branch(branch_id, row, col_id,
 			version, new_value, new_size);
@@ -292,11 +332,25 @@ RC txn_man::materialize_agent_delta_intents(const std::vector<AgentDeltaIntent> 
 	std::vector<AgentDeltaIntent> aggregated;
 	aggregated.reserve(intents.size());
 	for (uint64_t i = 0; i < intents.size(); i++) {
+#if IS_AET_HYBRID_CC
+		if (intents[i].type == AGENT_INTENT_TPCC_STOCK_UPDATE) {
+			assert(semantic_stock_update_cnt < MAX_ROW_PER_TXN);
+			semantic_stock_update_rows[semantic_stock_update_cnt] = intents[i].row;
+			semantic_stock_update_cols[semantic_stock_update_cnt] = intents[i].col_id;
+			semantic_stock_update_quantities[semantic_stock_update_cnt] = intents[i].quantity;
+			semantic_stock_update_cnt++;
+			continue;
+		}
+#endif
+		if (intents[i].type != AGENT_INTENT_DELTA)
+			return Abort;
 		bool merged = false;
 		for (uint64_t j = 0; j < aggregated.size(); j++) {
 			if (aggregated[j].row == intents[i].row &&
 					aggregated[j].col_id == intents[i].col_id) {
 				aggregated[j].delta += intents[i].delta;
+				aggregated[j].commit_time_merge =
+					aggregated[j].commit_time_merge && intents[i].commit_time_merge;
 				merged = true;
 				break;
 			}
@@ -308,6 +362,17 @@ RC txn_man::materialize_agent_delta_intents(const std::vector<AgentDeltaIntent> 
 	for (uint64_t i = 0; i < aggregated.size(); i++) {
 		row_t * row = aggregated[i].row;
 		int col_id = aggregated[i].col_id;
+#if IS_AET_HYBRID_CC
+		Access * access = find_access(this, row);
+		if (access == NULL && aggregated[i].commit_time_merge) {
+			assert(semantic_delta_cnt < MAX_ROW_PER_TXN);
+			semantic_delta_rows[semantic_delta_cnt] = row;
+			semantic_delta_cols[semantic_delta_cnt] = col_id;
+			semantic_delta_deltas[semantic_delta_cnt] = aggregated[i].delta;
+			semantic_delta_cnt++;
+			continue;
+		}
+#endif
 		row_t * row_local = get_agent_reserved_local_row(row);
 		if (row_local == NULL)
 			return Abort;
@@ -324,9 +389,10 @@ RC txn_man::validate_agent_read_intents(const std::vector<AgentReadIntent> & int
 	for (uint64_t i = 0; i < intents.size(); i++) {
 		row_t * row = intents[i].row;
 		aet_row_latch(row);
-		uint64_t version = current_row_version(row);
+		bool valid = validate_semantic_version(row, intents[i].col_id,
+				intents[i].observed_version);
 		aet_row_release(row);
-		if (version != intents[i].observed_version) {
+		if (!valid) {
 			INC_STATS(get_thd_id(), read_validate_abort_cnt, 1);
 			return Abort;
 		}
@@ -339,8 +405,8 @@ RC txn_man::validate_agent_write_intents(const std::vector<AgentWriteIntent> & i
 		row_t * row = intents[i].row;
 		int col_id = intents[i].col_id;
 		aet_row_latch(row);
-		uint64_t version = current_row_version(row);
-		bool version_matched = (version == intents[i].observed_version);
+		bool version_matched = validate_semantic_version(row, col_id,
+				intents[i].observed_version);
 		bool value_matched = true;
 		if (intents[i].type == AGENT_INTENT_COMPARE_AND_SET)
 			value_matched = field_equals(row, col_id, intents[i].expected_value);
@@ -487,7 +553,7 @@ void txn_man::cleanup(RC rc) {
 		} else {
 			orig_r->return_row(type, this, accesses[rid]->data);
 		}
-#if CC_ALG != TICTOC && !IS_SILO_CC
+#if CC_ALG != TICTOC && !IS_SILO_CC && !IS_AET_HYBRID_CC
 		accesses[rid]->data = NULL;
 #endif
 	}
@@ -506,6 +572,10 @@ void txn_man::cleanup(RC rc) {
 	row_cnt = 0;
 	wr_cnt = 0;
 	insert_cnt = 0;
+#if IS_AET_HYBRID_CC
+	semantic_delta_cnt = 0;
+	semantic_stock_update_cnt = 0;
+#endif
 #if IS_AET_CC
 	if (rc == Abort) {
 		abort_agent_branches();
@@ -525,7 +595,7 @@ row_t * txn_man::get_row(row_t * row, access_t type) {
 	if (accesses[row_cnt] == NULL) {
 		Access * access = (Access *) _mm_malloc(sizeof(Access), 64);
 		accesses[row_cnt] = access;
-#if (IS_SILO_CC || CC_ALG == TICTOC)
+#if (IS_SILO_CC || IS_AET_HYBRID_CC || CC_ALG == TICTOC)
 		access->data = (row_t *) _mm_malloc(sizeof(row_t), 64);
 		access->data->init(MAX_TUPLE_SIZE);
 		access->orig_data = (row_t *) _mm_malloc(sizeof(row_t), 64);
@@ -548,7 +618,7 @@ row_t * txn_man::get_row(row_t * row, access_t type) {
 #if CC_ALG == TICTOC
 	accesses[row_cnt]->wts = last_wts;
 	accesses[row_cnt]->rts = last_rts;
-#elif IS_SILO_CC
+#elif IS_SILO_CC || IS_AET_HYBRID_CC
 	accesses[row_cnt]->tid = last_tid;
 #elif CC_ALG == HEKATON
 	accesses[row_cnt]->history_entry = history_entry;
@@ -630,6 +700,15 @@ RC txn_man::finish(RC rc) {
 		INC_STATS(get_thd_id(), winner_commit_cnt, 1);
 	}
 #endif
+#elif IS_AET_HYBRID_CC
+	if (rc == RCOK)
+		rc = validate_aet_hybrid_cc();
+	else
+		cleanup(rc);
+	if (rc == RCOK) {
+		confirm_reservations();
+		INC_STATS(get_thd_id(), winner_commit_cnt, 1);
+	}
 #elif CC_ALG == HEKATON
 	rc = validate_hekaton(rc);
 	cleanup(rc);

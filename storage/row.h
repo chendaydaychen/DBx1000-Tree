@@ -30,6 +30,7 @@ class Row_ts;
 class Row_occ;
 class Row_tictoc;
 class Row_silo;
+class Row_aet_hybrid;
 class Row_vll;
 
 class row_t
@@ -91,12 +92,14 @@ public:
   	Row_mvcc * manager;
   #elif CC_ALG == HEKATON
   	Row_hekaton * manager;
-  #elif CC_ALG == OCC || IS_OCC_AET
+  #elif CC_ALG == OCC || (IS_OCC_AET && !IS_AET_HYBRID_CC)
   	Row_occ * manager;
   #elif CC_ALG == TICTOC
   	Row_tictoc * manager;
   #elif IS_SILO_CC
   	Row_silo * manager;
+  #elif IS_AET_HYBRID_CC
+  	Row_aet_hybrid * manager;
   #elif CC_ALG == VLL
   	Row_vll * manager;
   #endif
