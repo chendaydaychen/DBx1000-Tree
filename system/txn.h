@@ -78,6 +78,8 @@ public:
 	RC				record_agent_read_intent(row_t * row, int col_id, AgentReadMode mode);
 	RC				reserve_agent_branch_delta(row_t * row, int col_id, int64_t delta, bool enforce_nonnegative = true);
 	RC				reserve_agent_branch_delta_local(row_t * row, int col_id, int64_t delta);
+	RC				reserve_agent_branch_delta_local_for_branch(uint32_t branch_id,
+						row_t * row, int col_id, int64_t delta);
 	RC				record_agent_cas_intent(row_t * row, int col_id,
 						const void * expected_value, uint32_t expected_size,
 						const void * new_value, uint32_t new_size);
@@ -99,6 +101,8 @@ public:
 	void			release_agent_pending_delta(row_t * row, int64_t delta);
 	RC				materialize_agent_delta_intents(const std::vector<AgentDeltaIntent> & intents,
 						bool materialize_global_reservations);
+	RC				validate_agent_read_intents(const std::vector<AgentReadIntent> & intents);
+	RC				validate_agent_write_intents(const std::vector<AgentWriteIntent> & intents);
 	RC				materialize_agent_write_intents(const std::vector<AgentWriteIntent> & intents);
 #endif
 #if CC_ALG == TICTOC

@@ -44,6 +44,9 @@ void print_usage() {
 	printf("\t-Ao         ; Test OCC_RESERVE overdraw\n");
 	printf("\t-Ak         ; Test AET CAS winner intent\n");
 	printf("\t-Ax         ; Test AET XWRITE winner intent\n");
+	printf("\t-Av         ; Test AET READ version abort\n");
+	printf("\t-AK         ; Test AET CAS version abort\n");
+	printf("\t-AX         ; Test AET XWRITE version abort\n");
 }
 
 void parser(int argc, char * argv[]) {
@@ -128,6 +131,12 @@ void parser(int argc, char * argv[]) {
 				g_test_case = AET_CAS;
 			if (argv[i][2] == 'x')
 				g_test_case = AET_XWRITE;
+			if (argv[i][2] == 'v')
+				g_test_case = AET_READ_VALIDATE_ABORT;
+			if (argv[i][2] == 'K')
+				g_test_case = AET_CAS_VERSION_ABORT;
+			if (argv[i][2] == 'X')
+				g_test_case = AET_XWRITE_VERSION_ABORT;
 		}
 		else if (argv[i][1] == 'o') {
 			i++;

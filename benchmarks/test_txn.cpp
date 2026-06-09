@@ -1,5 +1,8 @@
 #include "test.h"
 #include "row.h"
+#include "row_occ.h"
+#include "row_silo.h"
+#include "manager.h"
 
 void TestTxnMan::init(thread_t * h_thd, workload * h_wl, uint64_t thd_id) {
 	txn_man::init(h_thd, h_wl, thd_id);
@@ -22,6 +25,12 @@ RC TestTxnMan::run_txn(int type, int access_num) {
 		return testAetCas();
 	case AET_XWRITE:
 		return testAetXwrite();
+	case AET_READ_VALIDATE_ABORT:
+		return testAetReadValidateAbort();
+	case AET_CAS_VERSION_ABORT:
+		return testAetCasVersionAbort();
+	case AET_XWRITE_VERSION_ABORT:
+		return testAetXwriteVersionAbort();
 	default:
 		assert(false);
 	}
@@ -229,6 +238,112 @@ TestTxnMan::testAetXwrite()
 	row->get_value(0, value);
 	assert(value == winner_value);
 	printf("AET_XWRITE TEST PASSED\n");
+	return FINISH;
+#else
+	assert(false);
+	return Abort;
+#endif
+}
+
+void
+TestTxnMan::forceUpdateInt(row_t * row, int col_id, int value)
+{
+	row_t local;
+	local.init(row->get_table(), row->get_part_id());
+	local.copy(row);
+	local.set_value(col_id, value);
+#if IS_SILO_CC
+	row->manager->lock();
+	uint64_t tid = row->manager->get_tid() + 1;
+	row->manager->write(&local, tid);
+	row->manager->release();
+#elif IS_OCC_AET
+	row->manager->latch();
+	uint64_t ts = glob_manager->get_ts(get_thd_id());
+	row->manager->write(&local, ts);
+	row->manager->release();
+#else
+	assert(false);
+#endif
+	local.free_row();
+}
+
+RC
+TestTxnMan::testAetReadValidateAbort()
+{
+#if IS_AET_CC
+	itemid_t * m_item = index_read(_wl->the_index, 0, 0);
+	row_t * row = ((row_t *)m_item->location);
+
+	RC rc = begin_agent_branches(1);
+	assert(rc == RCOK);
+	rc = begin_agent_branch(0);
+	assert(rc == RCOK);
+	rc = record_agent_read_intent(row, 0, AGENT_READ_STRICT);
+	assert(rc == RCOK);
+	forceUpdateInt(row, 0, 4444);
+	rc = select_agent_winner(0, false);
+	assert(rc == Abort);
+	rc = finish(rc);
+	assert(rc == Abort);
+	printf("AET_READ_VALIDATE_ABORT TEST PASSED\n");
+	return FINISH;
+#else
+	assert(false);
+	return Abort;
+#endif
+}
+
+RC
+TestTxnMan::testAetCasVersionAbort()
+{
+#if IS_AET_CC
+	itemid_t * m_item = index_read(_wl->the_index, 0, 0);
+	row_t * row = ((row_t *)m_item->location);
+	int expected;
+	row->get_value(0, expected);
+	int winner_value = 5555;
+
+	RC rc = begin_agent_branches(1);
+	assert(rc == RCOK);
+	rc = begin_agent_branch(0);
+	assert(rc == RCOK);
+	rc = record_agent_cas_intent(row, 0, &expected, sizeof(expected),
+			&winner_value, sizeof(winner_value));
+	assert(rc == RCOK);
+	forceUpdateInt(row, 0, expected);
+	rc = select_agent_winner(0, false);
+	assert(rc == Abort);
+	rc = finish(rc);
+	assert(rc == Abort);
+	printf("AET_CAS_VERSION_ABORT TEST PASSED\n");
+	return FINISH;
+#else
+	assert(false);
+	return Abort;
+#endif
+}
+
+RC
+TestTxnMan::testAetXwriteVersionAbort()
+{
+#if IS_AET_CC
+	itemid_t * m_item = index_read(_wl->the_index, 0, 0);
+	row_t * row = ((row_t *)m_item->location);
+	int winner_value = 6666;
+
+	RC rc = begin_agent_branches(1);
+	assert(rc == RCOK);
+	rc = begin_agent_branch(0);
+	assert(rc == RCOK);
+	rc = record_agent_xwrite_intent(row, 0, &winner_value, sizeof(winner_value));
+	assert(rc == RCOK);
+	forceUpdateInt(row, 0, 7777);
+	rc = select_agent_winner(0, false);
+	assert(rc == Abort);
+	rc = finish(rc);
+	assert(rc == Abort);
+	printf("AET_XWRITE_VERSION_ABORT TEST PASSED\n");
 	return FINISH;
 #else
 	assert(false);

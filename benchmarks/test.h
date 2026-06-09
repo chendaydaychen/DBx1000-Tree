@@ -34,6 +34,10 @@ private:
 	RC testReserveOverdraw();
 	RC testAetCas();
 	RC testAetXwrite();
+	RC testAetReadValidateAbort();
+	RC testAetCasVersionAbort();
+	RC testAetXwriteVersionAbort();
+	void forceUpdateInt(row_t * row, int col_id, int value);
 	
 	TestWorkload * _wl;
 };

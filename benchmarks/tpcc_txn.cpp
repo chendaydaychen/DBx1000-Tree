@@ -639,6 +639,7 @@ RC tpcc_txn_man::run_agent_new_order_reserve_impl(tpcc_query * query, bool enfor
 	row_t * root_dist = ((row_t *)item->location);
 	int64_t root_o_id = *(int64_t *) root_dist->get_value(D_NEXT_O_ID);
 	int64_t root_next_o_id = root_o_id + 1;
+	int64_t dist_next_o_id_delta = 1;
 
 	begin_agent_branches(branch_cnt);
 	uint64_t winner_supply_w_id = 0;
@@ -683,6 +684,8 @@ RC tpcc_txn_man::run_agent_new_order_reserve_impl(tpcc_query * query, bool enfor
 			if (enforce_nonnegative)
 				break;
 		}
+		if (!enforce_nonnegative && feasible && branch != branch_cnt - 1)
+			INC_STATS(get_thd_id(), planned_loser_abort_cnt, 1);
 		if (!feasible || (!enforce_nonnegative && branch != branch_cnt - 1))
 			abort_agent_branch(branch, enforce_nonnegative);
 	}
@@ -691,9 +694,8 @@ RC tpcc_txn_man::run_agent_new_order_reserve_impl(tpcc_query * query, bool enfor
 		INC_STATS(get_thd_id(), resource_abort_cnt, 1);
 		return finish(Abort);
 	}
-	rc = record_agent_cas_intent_for_branch(winner_branch, root_dist, D_NEXT_O_ID,
-			&root_o_id, sizeof(root_o_id),
-			&root_next_o_id, sizeof(root_next_o_id));
+	rc = reserve_agent_branch_delta_local_for_branch(winner_branch,
+			root_dist, D_NEXT_O_ID, dist_next_o_id_delta);
 	if (rc != RCOK) {
 		return finish(Abort);
 	}

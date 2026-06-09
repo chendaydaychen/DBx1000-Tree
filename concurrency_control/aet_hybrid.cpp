@@ -20,18 +20,29 @@ public:
 		for (uint64_t i = 0; i < delta_intents.size(); i++) {
 			if (delta_intents[i].type != AGENT_INTENT_DELTA)
 				return Abort;
+			if (choose_aet_policy(delta_intents[i].type) == POLICY_DELTA_RESERVATION)
+				INC_STATS(txn->get_thd_id(), aet_policy_delta_cnt, 1);
 		}
 		cas_intents.reserve(write_intents.size());
 		xwrite_intents.reserve(write_intents.size());
 		for (uint64_t i = 0; i < write_intents.size(); i++) {
-			if (write_intents[i].type == AGENT_INTENT_COMPARE_AND_SET)
+			if (write_intents[i].type == AGENT_INTENT_COMPARE_AND_SET) {
+				INC_STATS(txn->get_thd_id(), aet_policy_cas_cnt, 1);
 				cas_intents.push_back(write_intents[i]);
-			else if (write_intents[i].type == AGENT_INTENT_EXCLUSIVE_WRITE)
+			} else if (write_intents[i].type == AGENT_INTENT_EXCLUSIVE_WRITE) {
+				INC_STATS(txn->get_thd_id(), aet_policy_xwrite_cnt, 1);
 				xwrite_intents.push_back(write_intents[i]);
-			else
+			} else if (write_intents[i].type == AGENT_INTENT_INSERT) {
+				INC_STATS(txn->get_thd_id(), aet_policy_insert_cnt, 1);
+				return Abort;
+			} else if (write_intents[i].type == AGENT_INTENT_DELETE) {
+				INC_STATS(txn->get_thd_id(), aet_policy_delete_cnt, 1);
+				return Abort;
+			} else
 				return Abort;
 		}
 		for (uint64_t i = 0; i < read_intents.size(); i++) {
+			INC_STATS(txn->get_thd_id(), aet_policy_read_cnt, 1);
 			if (read_intents[i].mode == AGENT_READ_STRICT ||
 					read_intents[i].mode == AGENT_READ_FEASIBILITY ||
 					read_intents[i].mode == AGENT_READ_RANK ||
@@ -41,13 +52,25 @@ public:
 			return Abort;
 		}
 
+		RC rc = txn->validate_agent_read_intents(read_intents);
+		if (rc != RCOK)
+			return rc;
+		rc = txn->validate_agent_write_intents(cas_intents);
+		if (rc != RCOK)
+			return rc;
+		rc = txn->validate_agent_write_intents(xwrite_intents);
+		if (rc != RCOK)
+			return rc;
+
 		for (uint32_t i = 0; i < agent_txn->branch_count(); i++) {
 			if (i == branch_id)
 				continue;
+			if (agent_txn->branch_status(i) != BRANCH_RELEASED)
+				INC_STATS(txn->get_thd_id(), planned_loser_abort_cnt, 1);
 			release_branch(txn, agent_txn, i, materialize_global_reservations);
 		}
 
-		RC rc = agent_txn->select_winner(branch_id);
+		rc = agent_txn->select_winner(branch_id);
 		if (rc != RCOK)
 			return rc;
 

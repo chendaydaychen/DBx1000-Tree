@@ -244,7 +244,10 @@ RC thread_t::runTest(txn_man * txn)
 			 g_test_case == RESERVE_ABORT_RELEASE ||
 			 g_test_case == RESERVE_OVERDRAW ||
 			 g_test_case == AET_CAS ||
-			 g_test_case == AET_XWRITE) {
+			 g_test_case == AET_XWRITE ||
+			 g_test_case == AET_READ_VALIDATE_ABORT ||
+			 g_test_case == AET_CAS_VERSION_ABORT ||
+			 g_test_case == AET_XWRITE_VERSION_ABORT) {
 		rc = ((TestTxnMan *)txn)->run_txn(g_test_case, 0);
 		return rc;
 	}

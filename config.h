@@ -179,7 +179,10 @@ enum TestCases {
 	RESERVE_ABORT_RELEASE,
 	RESERVE_OVERDRAW,
 	AET_CAS,
-	AET_XWRITE
+	AET_XWRITE,
+	AET_READ_VALIDATE_ABORT,
+	AET_CAS_VERSION_ABORT,
+	AET_XWRITE_VERSION_ABORT
 };
 extern TestCases					g_test_case;
 /***********************************************/

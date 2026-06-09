@@ -23,7 +23,10 @@ enum AgentIntentType {
 	AGENT_INTENT_DELTA,
 	AGENT_INTENT_COMPARE_AND_SET,
 	AGENT_INTENT_EXCLUSIVE_WRITE,
-	AGENT_INTENT_READ
+	AGENT_INTENT_READ,
+	AGENT_INTENT_INSERT,
+	AGENT_INTENT_DELETE,
+	AGENT_INTENT_PRED_READ
 };
 
 enum AgentReadMode {
@@ -82,6 +85,8 @@ public:
 	RC record_read_intent(row_t * row, int col_id, AgentReadMode mode,
 			uint64_t observed_version, uint64_t snapshot_ts);
 	RC record_delta_intent(row_t * row, int col_id, int64_t delta, bool global_reserved);
+	RC record_delta_intent_for_branch(uint32_t branch_id, row_t * row, int col_id,
+			int64_t delta, bool global_reserved);
 	RC record_cas_intent(row_t * row, int col_id, uint64_t expected_version,
 			const void * expected_value, uint32_t expected_size,
 			const void * new_value, uint32_t new_size);
@@ -103,6 +108,7 @@ public:
 	uint32_t branch_count() const;
 	uint32_t current_branch() const;
 	uint32_t winner_branch() const;
+	AgentBranchStatus branch_status(uint32_t branch_id) const;
 	bool branch_active() const;
 	bool winner_selected() const;
 

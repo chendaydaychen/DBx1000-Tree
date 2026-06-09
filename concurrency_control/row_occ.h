@@ -15,6 +15,7 @@ public:
 	bool				validate(uint64_t ts);
 	void				write(row_t * data, uint64_t ts);
 	void 				release();
+	uint64_t			get_version();
 private:
  	pthread_mutex_t * 	_latch;
 	bool 				blatch;

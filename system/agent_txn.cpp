@@ -80,13 +80,20 @@ RC AgentTxnManager::record_read_intent(row_t * row, int col_id, AgentReadMode mo
 RC AgentTxnManager::record_delta_intent(row_t * row, int col_id, int64_t delta, bool global_reserved) {
 	assert(active_branch);
 	assert(current_branch_id < branch_cnt);
+	return record_delta_intent_for_branch(current_branch_id, row, col_id,
+			delta, global_reserved);
+}
+
+RC AgentTxnManager::record_delta_intent_for_branch(uint32_t branch_id, row_t * row, int col_id,
+		int64_t delta, bool global_reserved) {
+	assert(branch_id < branch_cnt);
 	AgentDeltaIntent intent;
 	intent.type = AGENT_INTENT_DELTA;
 	intent.row = row;
 	intent.col_id = col_id;
 	intent.delta = delta;
 	intent.global_reserved = global_reserved;
-	branches[current_branch_id].delta_intents.push_back(intent);
+	branches[branch_id].delta_intents.push_back(intent);
 	return RCOK;
 }
 
@@ -198,6 +205,11 @@ uint32_t AgentTxnManager::current_branch() const {
 
 uint32_t AgentTxnManager::winner_branch() const {
 	return winner_branch_id;
+}
+
+AgentBranchStatus AgentTxnManager::branch_status(uint32_t branch_id) const {
+	assert(branch_id < branch_cnt);
+	return branches[branch_id].status;
 }
 
 bool AgentTxnManager::branch_active() const {

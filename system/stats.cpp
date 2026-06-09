@@ -17,6 +17,23 @@ void Stats_thd::clear() {
 	txn_cnt = 0;
 	abort_cnt = 0;
 	resource_abort_cnt = 0;
+	agent_txn_cnt = 0;
+	branch_attempt_cnt = 0;
+	winner_commit_cnt = 0;
+	planned_loser_abort_cnt = 0;
+	read_validate_abort_cnt = 0;
+	cas_abort_cnt = 0;
+	xwrite_abort_cnt = 0;
+	insert_abort_cnt = 0;
+	delete_abort_cnt = 0;
+	predicate_abort_cnt = 0;
+	aet_policy_read_cnt = 0;
+	aet_policy_delta_cnt = 0;
+	aet_policy_cas_cnt = 0;
+	aet_policy_xwrite_cnt = 0;
+	aet_policy_insert_cnt = 0;
+	aet_policy_delete_cnt = 0;
+	aet_policy_pred_read_cnt = 0;
 	run_time = 0;
 	time_man = 0;
 	debug1 = 0;
@@ -109,6 +126,23 @@ void Stats::print() {
 	uint64_t total_txn_cnt = 0;
 	uint64_t total_abort_cnt = 0;
 	uint64_t total_resource_abort_cnt = 0;
+	uint64_t total_agent_txn_cnt = 0;
+	uint64_t total_branch_attempt_cnt = 0;
+	uint64_t total_winner_commit_cnt = 0;
+	uint64_t total_planned_loser_abort_cnt = 0;
+	uint64_t total_read_validate_abort_cnt = 0;
+	uint64_t total_cas_abort_cnt = 0;
+	uint64_t total_xwrite_abort_cnt = 0;
+	uint64_t total_insert_abort_cnt = 0;
+	uint64_t total_delete_abort_cnt = 0;
+	uint64_t total_predicate_abort_cnt = 0;
+	uint64_t total_aet_policy_read_cnt = 0;
+	uint64_t total_aet_policy_delta_cnt = 0;
+	uint64_t total_aet_policy_cas_cnt = 0;
+	uint64_t total_aet_policy_xwrite_cnt = 0;
+	uint64_t total_aet_policy_insert_cnt = 0;
+	uint64_t total_aet_policy_delete_cnt = 0;
+	uint64_t total_aet_policy_pred_read_cnt = 0;
 	double total_run_time = 0;
 	double total_time_man = 0;
 	double total_debug1 = 0;
@@ -127,6 +161,23 @@ void Stats::print() {
 		total_txn_cnt += _stats[tid]->txn_cnt;
 		total_abort_cnt += _stats[tid]->abort_cnt;
 		total_resource_abort_cnt += _stats[tid]->resource_abort_cnt;
+		total_agent_txn_cnt += _stats[tid]->agent_txn_cnt;
+		total_branch_attempt_cnt += _stats[tid]->branch_attempt_cnt;
+		total_winner_commit_cnt += _stats[tid]->winner_commit_cnt;
+		total_planned_loser_abort_cnt += _stats[tid]->planned_loser_abort_cnt;
+		total_read_validate_abort_cnt += _stats[tid]->read_validate_abort_cnt;
+		total_cas_abort_cnt += _stats[tid]->cas_abort_cnt;
+		total_xwrite_abort_cnt += _stats[tid]->xwrite_abort_cnt;
+		total_insert_abort_cnt += _stats[tid]->insert_abort_cnt;
+		total_delete_abort_cnt += _stats[tid]->delete_abort_cnt;
+		total_predicate_abort_cnt += _stats[tid]->predicate_abort_cnt;
+		total_aet_policy_read_cnt += _stats[tid]->aet_policy_read_cnt;
+		total_aet_policy_delta_cnt += _stats[tid]->aet_policy_delta_cnt;
+		total_aet_policy_cas_cnt += _stats[tid]->aet_policy_cas_cnt;
+		total_aet_policy_xwrite_cnt += _stats[tid]->aet_policy_xwrite_cnt;
+		total_aet_policy_insert_cnt += _stats[tid]->aet_policy_insert_cnt;
+		total_aet_policy_delete_cnt += _stats[tid]->aet_policy_delete_cnt;
+		total_aet_policy_pred_read_cnt += _stats[tid]->aet_policy_pred_read_cnt;
 		total_run_time += _stats[tid]->run_time;
 		total_time_man += _stats[tid]->time_man;
 		total_debug1 += _stats[tid]->debug1;
@@ -152,6 +203,14 @@ void Stats::print() {
 	if (output_file != NULL) {
 		outf = fopen(output_file, "w");
 		fprintf(outf, "[summary] txn_cnt=%ld, abort_cnt=%ld, resource_abort_cnt=%ld"
+			", agent_txn_cnt=%ld, branch_attempt_cnt=%ld, winner_commit_cnt=%ld"
+			", planned_loser_abort_cnt=%ld, read_validate_abort_cnt=%ld"
+			", cas_abort_cnt=%ld, xwrite_abort_cnt=%ld, insert_abort_cnt=%ld"
+			", delete_abort_cnt=%ld, predicate_abort_cnt=%ld"
+			", aet_policy_read_cnt=%ld, aet_policy_delta_cnt=%ld"
+			", aet_policy_cas_cnt=%ld, aet_policy_xwrite_cnt=%ld"
+			", aet_policy_insert_cnt=%ld, aet_policy_delete_cnt=%ld"
+			", aet_policy_pred_read_cnt=%ld"
 			", run_time=%f, time_wait=%f, time_ts_alloc=%f"
 			", time_man=%f, time_index=%f, time_abort=%f, time_cleanup=%f, latency=%f"
 			", deadlock_cnt=%ld, cycle_detect=%ld, dl_detect_time=%f, dl_wait_time=%f"
@@ -159,6 +218,23 @@ void Stats::print() {
 			total_txn_cnt, 
 			total_abort_cnt,
 			total_resource_abort_cnt,
+			total_agent_txn_cnt,
+			total_branch_attempt_cnt,
+			total_winner_commit_cnt,
+			total_planned_loser_abort_cnt,
+			total_read_validate_abort_cnt,
+			total_cas_abort_cnt,
+			total_xwrite_abort_cnt,
+			total_insert_abort_cnt,
+			total_delete_abort_cnt,
+			total_predicate_abort_cnt,
+			total_aet_policy_read_cnt,
+			total_aet_policy_delta_cnt,
+			total_aet_policy_cas_cnt,
+			total_aet_policy_xwrite_cnt,
+			total_aet_policy_insert_cnt,
+			total_aet_policy_delete_cnt,
+			total_aet_policy_pred_read_cnt,
 			total_run_time / BILLION,
 			total_time_wait / BILLION,
 			total_time_ts_alloc / BILLION,
@@ -181,6 +257,14 @@ void Stats::print() {
 		fclose(outf);
 	}
 	printf("[summary] txn_cnt=%ld, abort_cnt=%ld, resource_abort_cnt=%ld"
+		", agent_txn_cnt=%ld, branch_attempt_cnt=%ld, winner_commit_cnt=%ld"
+		", planned_loser_abort_cnt=%ld, read_validate_abort_cnt=%ld"
+		", cas_abort_cnt=%ld, xwrite_abort_cnt=%ld, insert_abort_cnt=%ld"
+		", delete_abort_cnt=%ld, predicate_abort_cnt=%ld"
+		", aet_policy_read_cnt=%ld, aet_policy_delta_cnt=%ld"
+		", aet_policy_cas_cnt=%ld, aet_policy_xwrite_cnt=%ld"
+		", aet_policy_insert_cnt=%ld, aet_policy_delete_cnt=%ld"
+		", aet_policy_pred_read_cnt=%ld"
 		", run_time=%f, time_wait=%f, time_ts_alloc=%f"
 		", time_man=%f, time_index=%f, time_abort=%f, time_cleanup=%f, latency=%f"
 		", deadlock_cnt=%ld, cycle_detect=%ld, dl_detect_time=%f, dl_wait_time=%f"
@@ -188,6 +272,23 @@ void Stats::print() {
 		total_txn_cnt, 
 		total_abort_cnt,
 		total_resource_abort_cnt,
+		total_agent_txn_cnt,
+		total_branch_attempt_cnt,
+		total_winner_commit_cnt,
+		total_planned_loser_abort_cnt,
+		total_read_validate_abort_cnt,
+		total_cas_abort_cnt,
+		total_xwrite_abort_cnt,
+		total_insert_abort_cnt,
+		total_delete_abort_cnt,
+		total_predicate_abort_cnt,
+		total_aet_policy_read_cnt,
+		total_aet_policy_delta_cnt,
+		total_aet_policy_cas_cnt,
+		total_aet_policy_xwrite_cnt,
+		total_aet_policy_insert_cnt,
+		total_aet_policy_delete_cnt,
+		total_aet_policy_pred_read_cnt,
 		total_run_time / BILLION,
 		total_time_wait / BILLION,
 		total_time_ts_alloc / BILLION,

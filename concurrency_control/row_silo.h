@@ -20,6 +20,7 @@ public:
 	void 				release();
 	bool				try_lock();
 	uint64_t 			get_tid();
+	uint64_t			get_version() { return get_tid(); }
 
 	void 				assert_lock() {assert(_tid_word & LOCK_BIT); }
 private:

@@ -55,3 +55,8 @@ void
 Row_occ::release() {
 	pthread_mutex_unlock( _latch );
 }
+
+uint64_t
+Row_occ::get_version() {
+	return wts;
+}

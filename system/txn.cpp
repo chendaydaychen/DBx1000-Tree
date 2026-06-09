@@ -51,6 +51,14 @@ namespace {
 		return memcmp(row->get_value(col_id), &value[0], field_size) == 0;
 	}
 
+	uint64_t current_row_version(row_t * row) {
+#if IS_SILO_CC
+		return row->manager->get_version();
+#else
+		return row->manager->get_version();
+#endif
+	}
+
 	void aet_row_latch(row_t * row) {
 #if CC_ALG == AET_HYBRID_SILO
 		row->manager->lock();
@@ -188,15 +196,20 @@ RC txn_man::reserve_row_delta(row_t * row, int col_id, int64_t delta, row_t ** l
 
 RC txn_man::begin_agent_branches(uint32_t branch_cnt) {
 	abort_agent_branches();
+	INC_STATS(get_thd_id(), agent_txn_cnt, 1);
 	return agent_txn.begin_agent_txn(branch_cnt);
 }
 
 RC txn_man::begin_agent_branch(uint32_t branch_id) {
+	INC_STATS(get_thd_id(), branch_attempt_cnt, 1);
 	return agent_txn.begin_branch(branch_id);
 }
 
 RC txn_man::record_agent_read_intent(row_t * row, int col_id, AgentReadMode mode) {
-	return agent_txn.record_read_intent(row, col_id, mode, start_ts, start_ts);
+	aet_row_latch(row);
+	uint64_t version = current_row_version(row);
+	aet_row_release(row);
+	return agent_txn.record_read_intent(row, col_id, mode, version, start_ts);
 }
 
 RC txn_man::reserve_agent_branch_delta(row_t * row, int col_id, int64_t delta, bool enforce_nonnegative) {
@@ -210,10 +223,19 @@ RC txn_man::reserve_agent_branch_delta_local(row_t * row, int col_id, int64_t de
 	return agent_txn.record_delta_intent(row, col_id, delta, false);
 }
 
+RC txn_man::reserve_agent_branch_delta_local_for_branch(uint32_t branch_id,
+		row_t * row, int col_id, int64_t delta) {
+	return agent_txn.record_delta_intent_for_branch(branch_id, row, col_id,
+			delta, false);
+}
+
 RC txn_man::record_agent_cas_intent(row_t * row, int col_id,
 		const void * expected_value, uint32_t expected_size,
 		const void * new_value, uint32_t new_size) {
-	return agent_txn.record_cas_intent(row, col_id, start_ts,
+	aet_row_latch(row);
+	uint64_t version = current_row_version(row);
+	aet_row_release(row);
+	return agent_txn.record_cas_intent(row, col_id, version,
 			expected_value, expected_size, new_value, new_size);
 }
 
@@ -221,20 +243,29 @@ RC txn_man::record_agent_cas_intent_for_branch(uint32_t branch_id,
 		row_t * row, int col_id,
 		const void * expected_value, uint32_t expected_size,
 		const void * new_value, uint32_t new_size) {
-	return agent_txn.record_cas_intent_for_branch(branch_id, row, col_id, start_ts,
+	aet_row_latch(row);
+	uint64_t version = current_row_version(row);
+	aet_row_release(row);
+	return agent_txn.record_cas_intent_for_branch(branch_id, row, col_id, version,
 			expected_value, expected_size, new_value, new_size);
 }
 
 RC txn_man::record_agent_xwrite_intent(row_t * row, int col_id,
 		const void * new_value, uint32_t new_size) {
-	return agent_txn.record_xwrite_intent(row, col_id, start_ts, new_value, new_size);
+	aet_row_latch(row);
+	uint64_t version = current_row_version(row);
+	aet_row_release(row);
+	return agent_txn.record_xwrite_intent(row, col_id, version, new_value, new_size);
 }
 
 RC txn_man::record_agent_xwrite_intent_for_branch(uint32_t branch_id,
 		row_t * row, int col_id,
 		const void * new_value, uint32_t new_size) {
+	aet_row_latch(row);
+	uint64_t version = current_row_version(row);
+	aet_row_release(row);
 	return agent_txn.record_xwrite_intent_for_branch(branch_id, row, col_id,
-			start_ts, new_value, new_size);
+			version, new_value, new_size);
 }
 
 RC txn_man::select_agent_winner(uint32_t branch_id) {
@@ -285,6 +316,47 @@ RC txn_man::materialize_agent_delta_intents(const std::vector<AgentDeltaIntent> 
 		int64_t committed_value = read_i64_field(row, col_id);
 		aet_row_release(row);
 		write_i64_field(row_local, col_id, committed_value + aggregated[i].delta);
+	}
+	return RCOK;
+}
+
+RC txn_man::validate_agent_read_intents(const std::vector<AgentReadIntent> & intents) {
+	for (uint64_t i = 0; i < intents.size(); i++) {
+		row_t * row = intents[i].row;
+		aet_row_latch(row);
+		uint64_t version = current_row_version(row);
+		aet_row_release(row);
+		if (version != intents[i].observed_version) {
+			INC_STATS(get_thd_id(), read_validate_abort_cnt, 1);
+			return Abort;
+		}
+	}
+	return RCOK;
+}
+
+RC txn_man::validate_agent_write_intents(const std::vector<AgentWriteIntent> & intents) {
+	for (uint64_t i = 0; i < intents.size(); i++) {
+		row_t * row = intents[i].row;
+		int col_id = intents[i].col_id;
+		aet_row_latch(row);
+		uint64_t version = current_row_version(row);
+		bool version_matched = (version == intents[i].observed_version);
+		bool value_matched = true;
+		if (intents[i].type == AGENT_INTENT_COMPARE_AND_SET)
+			value_matched = field_equals(row, col_id, intents[i].expected_value);
+		aet_row_release(row);
+
+		if (intents[i].type == AGENT_INTENT_COMPARE_AND_SET) {
+			if (!version_matched || !value_matched) {
+				INC_STATS(get_thd_id(), cas_abort_cnt, 1);
+				return Abort;
+			}
+		} else if (intents[i].type == AGENT_INTENT_EXCLUSIVE_WRITE) {
+			if (!version_matched) {
+				INC_STATS(get_thd_id(), xwrite_abort_cnt, 1);
+				return Abort;
+			}
+		}
 	}
 	return RCOK;
 }
@@ -537,8 +609,10 @@ RC txn_man::finish(RC rc) {
 	else 
 		cleanup(rc);
 #if IS_AET_CC
-	if (rc == RCOK)
+	if (rc == RCOK) {
 		confirm_reservations();
+		INC_STATS(get_thd_id(), winner_commit_cnt, 1);
+	}
 #endif
 #elif CC_ALG == TICTOC
 	if (rc == RCOK)
@@ -551,8 +625,10 @@ RC txn_man::finish(RC rc) {
 	else 
 		cleanup(rc);
 #if IS_AET_CC
-	if (rc == RCOK)
+	if (rc == RCOK) {
 		confirm_reservations();
+		INC_STATS(get_thd_id(), winner_commit_cnt, 1);
+	}
 #endif
 #elif CC_ALG == HEKATON
 	rc = validate_hekaton(rc);

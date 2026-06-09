@@ -81,6 +81,23 @@ fields = dict(re.findall(r"([A-Za-z0-9_]+)=([0-9.]+)", summary))
 txn_cnt = float(fields.get("txn_cnt", 0))
 abort_cnt = float(fields.get("abort_cnt", 0))
 resource_abort_cnt = float(fields.get("resource_abort_cnt", 0))
+agent_txn_cnt = float(fields.get("agent_txn_cnt", 0))
+branch_attempt_cnt = float(fields.get("branch_attempt_cnt", 0))
+winner_commit_cnt = float(fields.get("winner_commit_cnt", 0))
+planned_loser_abort_cnt = float(fields.get("planned_loser_abort_cnt", 0))
+read_validate_abort_cnt = float(fields.get("read_validate_abort_cnt", 0))
+cas_abort_cnt = float(fields.get("cas_abort_cnt", 0))
+xwrite_abort_cnt = float(fields.get("xwrite_abort_cnt", 0))
+insert_abort_cnt = float(fields.get("insert_abort_cnt", 0))
+delete_abort_cnt = float(fields.get("delete_abort_cnt", 0))
+predicate_abort_cnt = float(fields.get("predicate_abort_cnt", 0))
+aet_policy_read_cnt = float(fields.get("aet_policy_read_cnt", 0))
+aet_policy_delta_cnt = float(fields.get("aet_policy_delta_cnt", 0))
+aet_policy_cas_cnt = float(fields.get("aet_policy_cas_cnt", 0))
+aet_policy_xwrite_cnt = float(fields.get("aet_policy_xwrite_cnt", 0))
+aet_policy_insert_cnt = float(fields.get("aet_policy_insert_cnt", 0))
+aet_policy_delete_cnt = float(fields.get("aet_policy_delete_cnt", 0))
+aet_policy_pred_read_cnt = float(fields.get("aet_policy_pred_read_cnt", 0))
 run_time = float(fields.get("run_time", 0))
 latency = float(fields.get("latency", 0))
 total_attempts = txn_cnt + abort_cnt
@@ -88,10 +105,16 @@ throughput = txn_cnt / run_time if run_time > 0 else 0
 attempt_throughput = total_attempts / run_time if run_time > 0 else 0
 success_rate = txn_cnt / total_attempts if total_attempts > 0 else 0
 
-header = "mode,cc_alg,tpcc_type,threads,max_txn,warehouses,branches,txn_cnt,abort_cnt,resource_abort_cnt,success_rate,throughput,attempt_throughput,avg_latency,output_file\n"
-row = "%s,%s,%s,%s,%s,%s,%s,%d,%d,%d,%.6f,%.6f,%.6f,%.9f,%s\n" % (
+header = "mode,cc_alg,tpcc_type,threads,max_txn,warehouses,branches,txn_cnt,abort_cnt,resource_abort_cnt,agent_txn_cnt,branch_attempt_cnt,winner_commit_cnt,planned_loser_abort_cnt,read_validate_abort_cnt,cas_abort_cnt,xwrite_abort_cnt,insert_abort_cnt,delete_abort_cnt,predicate_abort_cnt,aet_policy_read_cnt,aet_policy_delta_cnt,aet_policy_cas_cnt,aet_policy_xwrite_cnt,aet_policy_insert_cnt,aet_policy_delete_cnt,aet_policy_pred_read_cnt,success_rate,throughput,attempt_throughput,avg_latency,output_file\n"
+row = "%s,%s,%s,%s,%s,%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.9f,%s\n" % (
     mode, cc_alg, tpcc_type, threads, max_txn, warehouses, branches,
-    txn_cnt, abort_cnt, resource_abort_cnt, success_rate, throughput, attempt_throughput, latency, outfile
+    txn_cnt, abort_cnt, resource_abort_cnt,
+    agent_txn_cnt, branch_attempt_cnt, winner_commit_cnt, planned_loser_abort_cnt,
+    read_validate_abort_cnt, cas_abort_cnt, xwrite_abort_cnt,
+    insert_abort_cnt, delete_abort_cnt, predicate_abort_cnt,
+    aet_policy_read_cnt, aet_policy_delta_cnt, aet_policy_cas_cnt, aet_policy_xwrite_cnt,
+    aet_policy_insert_cnt, aet_policy_delete_cnt, aet_policy_pred_read_cnt,
+    success_rate, throughput, attempt_throughput, latency, outfile
 )
 write_header = not os.path.exists(csv_path)
 with open(csv_path, "a") as f:
